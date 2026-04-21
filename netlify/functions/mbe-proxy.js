@@ -7,183 +7,105 @@ exports.handler = async function (event) {
   }
 
   const headers = { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" };
-
-  if (event.httpMethod === "OPTIONS") {
-    return { statusCode: 200, headers, body: "" };
-  }
+  if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers, body: "" };
 
   const params = event.queryStringParameters || {};
   const action = params.action || "search";
+  const ENDPOINT = "https://api.mbeonline.it/ws/e-link";
+  const NS = "http://www.onlinembe.eu/ws/";
+  const credentials = `<Credentials><Username>${MBE_USER}</Username><Passphrase>${MBE_PASS}</Passphrase></Credentials>`;
+  const refId = `<InternalReferenceID>REF-${Date.now()}</InternalReferenceID>`;
 
-  // Try multiple endpoints and SOAP formats
-  const endpoints = [
-    "https://api.mbeonline.it/ws/e-link",
-    "https://www.onlinembe.it/ws/e-link",
-    "https://api.mbeonline.it/ws/MBEShipping",
-  ];
+  try {
+    const dateFrom = params.dateFrom || "2024-01-01";
+    const dateTo = params.dateTo || new Date().toISOString().slice(0, 10);
 
-  const soapVariants = buildSOAPVariants(MBE_USER, MBE_PASS, action, params);
+    // Try all three list versions in sequence until one returns shipments
+    const variants = [
+      { action: "ShipmentsListV3Request", tag: "ShipmentsListV3Request" },
+      { action: "ShipmentsListV2Request", tag: "ShipmentsListV2Request" },
+      { action: "ShipmentsListRequest",   tag: "ShipmentsListRequest"   },
+    ];
 
-  let lastError = null;
-  let lastRaw = "";
+    for (const v of variants) {
+      const soapBody = `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ws="${NS}">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <ws:${v.tag}>
+      <ws:RequestContainer>
+        <System>IT</System>
+        ${credentials}
+        ${refId}
+        <DateFrom>${dateFrom}</DateFrom>
+        <DateTo>${dateTo}</DateTo>
+      </ws:RequestContainer>
+    </ws:${v.tag}>
+  </soapenv:Body>
+</soapenv:Envelope>`;
 
-  for (const endpoint of endpoints) {
-    for (const variant of soapVariants) {
-      try {
-        const resp = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "text/xml; charset=utf-8",
-            "SOAPAction": variant.action,
-          },
-          body: variant.body,
-          signal: AbortSignal.timeout(8000),
-        });
+      const resp = await fetch(ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "text/xml; charset=utf-8", "SOAPAction": `"${v.action}"` },
+        body: soapBody,
+        signal: AbortSignal.timeout(10000),
+      });
+      const xml = await resp.text();
 
-        const xml = await resp.text();
-        lastRaw = xml;
+      // Check if response looks valid (has Status OK and not just an error)
+      const hasOk = xml.includes("<Status>OK</Status>");
+      const hasFault = xml.includes("Fault") || xml.includes("faultstring");
+      const hasError = xml.includes("<Status>ERROR</Status>");
 
-        // Check for valid SOAP response (not a fault with no data)
-        if (xml && xml.length > 50 && !xml.includes("Invalid credentials") && !xml.includes("AuthenticationFault")) {
-          const data = parseXML(xml, action);
-          // Return even if data is empty — include raw for debugging
-          return {
-            statusCode: 200,
-            headers,
-            body: JSON.stringify({ ok: true, data, raw: xml, endpoint, variant: variant.name })
-          };
-        }
-      } catch (e) {
-        lastError = e.message;
+      if (hasOk && !hasError) {
+        const data = parseShipments(xml);
+        return { statusCode: 200, headers, body: JSON.stringify({ ok: true, data, raw: xml, variant: v.action }) };
+      }
+
+      if (!hasFault && !hasError && xml.length > 200) {
+        // Might have data even without explicit OK
+        const data = parseShipments(xml);
+        return { statusCode: 200, headers, body: JSON.stringify({ ok: true, data, raw: xml, variant: v.action }) };
       }
     }
-  }
 
-  return {
-    statusCode: 200,
-    headers,
-    body: JSON.stringify({ ok: false, error: lastError, raw: lastRaw })
-  };
+    return { statusCode: 200, headers, body: JSON.stringify({ ok: false, error: "Nessuna variante API ha funzionato", raw: "" }) };
+
+  } catch (e) {
+    return { statusCode: 500, headers, body: JSON.stringify({ ok: false, error: e.message }) };
+  }
 };
 
-function buildSOAPVariants(user, pass, action, params) {
-  const dateFrom = params.dateFrom || "2024-01-01";
-  const dateTo = params.dateTo || new Date().toISOString().slice(0, 10);
-  const tracking = params.tracking || "";
-
-  const credentials1 = `<Credentials><Username>${user}</Username><Passphrase>${pass}</Passphrase></Credentials>`;
-  const credentials2 = `<credentials><username>${user}</username><passphrase>${pass}</passphrase></credentials>`;
-
-  if (action === "search") {
-    return [
-      {
-        name: "ShipmentsListRequest-v1",
-        action: '"ShipmentsListRequest"',
-        body: `<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ws="http://www.onlinembe.it/ws/">
-<soapenv:Header/><soapenv:Body>
-<ws:ShipmentsListRequest>
-${credentials1}
-<DateFrom>${dateFrom}</DateFrom><DateTo>${dateTo}</DateTo>
-</ws:ShipmentsListRequest>
-</soapenv:Body></soapenv:Envelope>`
-      },
-      {
-        name: "SearchShipments-v1",
-        action: '"SearchShipments"',
-        body: `<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ws="http://www.onlinembe.it/ws/">
-<soapenv:Header/><soapenv:Body>
-<ws:SearchShipments>
-${credentials1}
-<SearchParameters><DateFrom>${dateFrom}</DateFrom><DateTo>${dateTo}</DateTo></SearchParameters>
-</ws:SearchShipments>
-</soapenv:Body></soapenv:Envelope>`
-      },
-      {
-        name: "ShipmentsListV2Request",
-        action: '"ShipmentsListV2Request"',
-        body: `<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ws="http://www.onlinembe.it/ws/">
-<soapenv:Header/><soapenv:Body>
-<ws:ShipmentsListV2Request>
-${credentials1}
-<DateFrom>${dateFrom}</DateFrom><DateTo>${dateTo}</DateTo>
-</ws:ShipmentsListV2Request>
-</soapenv:Body></soapenv:Envelope>`
-      },
-      {
-        name: "ShipmentsListV3Request",
-        action: '"ShipmentsListV3Request"',
-        body: `<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ws="http://www.onlinembe.it/ws/">
-<soapenv:Header/><soapenv:Body>
-<ws:ShipmentsListV3Request>
-${credentials1}
-<DateFrom>${dateFrom}</DateFrom><DateTo>${dateTo}</DateTo>
-</ws:ShipmentsListV3Request>
-</soapenv:Body></soapenv:Envelope>`
-      },
-    ];
-  } else {
-    return [
-      {
-        name: "TrackingRequest-v1",
-        action: '"TrackingRequest"',
-        body: `<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ws="http://www.onlinembe.it/ws/">
-<soapenv:Header/><soapenv:Body>
-<ws:TrackingRequest>
-${credentials1}
-<MasterTrackingsMBE><string>${tracking}</string></MasterTrackingsMBE>
-</ws:TrackingRequest>
-</soapenv:Body></soapenv:Envelope>`
-      },
-    ];
-  }
-}
-
-function parseXML(xml, action) {
+function parseShipments(xml) {
   const results = [];
-  // Try many possible tag patterns for shipment list
-  const patterns = [
-    /ShipmentInfo|ShipmentItem|Shipment|shipment/g,
-  ];
-  // Extract any repeated block that looks like a shipment
-  const blockRegex = /<([A-Za-z:]*(?:Shipment|shipment)[A-Za-z]*)[^>]*>([\s\S]*?)<\/\1>/gi;
-  const found = new Set();
-  let m;
-  while ((m = blockRegex.exec(xml)) !== null) {
-    const tag = m[1];
-    const block = m[2];
-    if (found.has(block)) continue;
-    found.add(block);
-    const obj = {
-      masterTracking: extractTag(block, "MasterTrackingMBE") || extractTag(block, "IdMBE") || extractTag(block, "MBETracking"),
-      courierTracking: extractTag(block, "CourierMasterTracking") || extractTag(block, "CourierTracking") || extractTag(block, "TrackingNumber"),
-      state: extractTag(block, "ShipmentState") || extractTag(block, "State") || extractTag(block, "Status"),
-      recipient: extractTag(block, "Name") || extractTag(block, "RecipientName") || extractTag(block, "Recipient"),
-      city: extractTag(block, "City") || extractTag(block, "RecipientCity"),
-      country: extractTag(block, "Country") || extractTag(block, "RecipientCountry"),
-      date: extractTag(block, "ShipmentDate") || extractTag(block, "Date") || extractTag(block, "CreationDate"),
-      courier: extractTag(block, "CourierName") || extractTag(block, "Courier") || extractTag(block, "CourierService"),
-      service: extractTag(block, "ServiceName") || extractTag(block, "Service") || extractTag(block, "ServiceDesc"),
-      reference: extractTag(block, "CustomerReference") || extractTag(block, "Reference") || extractTag(block, "ExternalReference"),
-    };
-    if (obj.masterTracking || obj.courierTracking || obj.recipient) {
-      results.push(obj);
+  const tags = ["ShipmentItem", "Shipment", "ShipmentInfo", "ShipmentListItem", "ShipmentV3Item", "ShipmentV2Item"];
+  for (const tag of tags) {
+    const regex = new RegExp(`<(?:[a-z]+:)?${tag}[^>]*>([\\s\\S]*?)<\\/(?:[a-z]+:)?${tag}>`, "gi");
+    let m;
+    while ((m = regex.exec(xml)) !== null) {
+      const b = m[1];
+      const obj = {
+        masterTracking: get(b, "MasterTrackingMBE") || get(b, "MbeTracking"),
+        courierTracking: get(b, "CourierMasterTrk") || get(b, "CourierMasterTracking") || get(b, "CourierTracking"),
+        state: get(b, "ShipmentState") || get(b, "State") || get(b, "Status"),
+        recipient: get(b, "Name"),
+        companyName: get(b, "CompanyName"),
+        city: get(b, "City"),
+        country: get(b, "Country"),
+        date: get(b, "ShipmentDate") || get(b, "OrderDate") || get(b, "Date"),
+        courier: get(b, "Courier"),
+        service: get(b, "Service") || get(b, "CourierService"),
+        reference: get(b, "Referring") || get(b, "CustomerReference"),
+        description: get(b, "Description"),
+      };
+      if (obj.masterTracking || obj.courierTracking || obj.recipient) results.push(obj);
     }
+    if (results.length > 0) break;
   }
   return results;
 }
 
-function extractTag(xml, tag) {
-  const patterns = [
-    new RegExp(`<(?:[a-zA-Z]+:)?${tag}>([^<]*)<\/(?:[a-zA-Z]+:)?${tag}>`, "i"),
-  ];
-  for (const p of patterns) {
-    const m = xml.match(p);
-    if (m && m[1].trim()) return m[1].trim();
-  }
-  return null;
+function get(xml, tag) {
+  const m = xml.match(new RegExp(`<(?:[a-z]+:)?${tag}>([^<]*)<\\/(?:[a-z]+:)?${tag}>`, "i"));
+  return m && m[1].trim() ? m[1].trim() : null;
 }
