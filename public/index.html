@@ -26,9 +26,6 @@
     MBE Tracker
   </div>
   <div class="topbar-actions">
-    <button class="icon-btn" onclick="fetchShipments()" title="Aggiorna da MBE">
-      ↺
-    </button>
   </div>
 </div>
 
@@ -64,7 +61,10 @@
 <!-- Content -->
 <div class="content">
   <div id="ptr-indicator" class="ptr-indicator">↓ Tira per aggiornare</div>
-  <div style="font-size:11px;color:var(--text-faint);text-align:right;margin-bottom:10px;" id="last-sync"></div>
+  <div style="font-size:11px;color:var(--text-faint);text-align:right;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;">
+    <button class="btn-sm" style="font-size:13px;padding:6px 14px;" onclick="fetchShipments()">↺ Aggiorna da MBE</button>
+    <span id="last-sync"></span>
+  </div>
   <div id="shipment-list"></div>
 </div>
 
@@ -93,6 +93,8 @@
     <h2>Aggiungi spedizione</h2>
     <label>Tracking UPS *</label>
     <input type="text" id="add-tracking" placeholder="1Z999AA10123456784">
+    <label>Mittente</label>
+    <input type="text" id="add-sender" placeholder="Chi spedisce">
     <label>Destinatario</label>
     <input type="text" id="add-recipient" placeholder="Nome cliente o azienda">
     <label>Nota</label>
