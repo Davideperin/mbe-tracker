@@ -57,9 +57,11 @@ body {
   background: var(--red);
   color: white;
   padding: 0 16px;
-  height: 56px;
+  padding-top: env(safe-area-inset-top);
+  height: calc(56px + env(safe-area-inset-top));
   display: flex;
-  align-items: center;
+  align-items: flex-end;
+  padding-bottom: 10px;
   justify-content: space-between;
   position: sticky;
   top: 0;
@@ -219,6 +221,7 @@ body {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
+  flex-wrap: wrap;
 }
 .btn-sm {
   padding: 5px 12px;
