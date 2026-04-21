@@ -169,6 +169,10 @@ function renderCard(s) {
 
     <div class="card-details">
       <div class="detail-row">
+        <span class="detail-label">Mittente</span>
+        <span class="detail-value">${s.sender || "—"}</span>
+      </div>
+      <div class="detail-row">
         <span class="detail-label">Corriere</span>
         <span class="detail-value">${s.courier || "UPS"}</span>
       </div>
@@ -196,6 +200,7 @@ function renderCard(s) {
       </button>
       <button class="btn-sm" onclick="openNoteModal('${s.masterTracking}')">✏️ Nota</button>
       ${upsTracking ? `<button class="btn-sm primary" onclick="openUPS('${upsTracking}')">Traccia UPS</button>` : ""}
+      <button class="btn-sm danger" onclick="deleteShipment('${s.masterTracking}')">🗑 Rimuovi</button>
     </div>
   </div>`;
 }
@@ -222,6 +227,15 @@ function toggleEvents(masterTracking) {
 
 function openUPS(tracking) {
   window.open(`https://www.ups.com/track?tracknum=${tracking}&loc=it_IT`, "_blank");
+}
+
+async function deleteShipment(masterTracking) {
+  if (!confirm("Rimuovere questa spedizione?")) return;
+  state.shipments = state.shipments.filter(s => s.masterTracking !== masterTracking);
+  delete state.notes[masterTracking];
+  saveLocal();
+  render();
+  showToast("Spedizione rimossa");
 }
 
 // ── NOTE MODAL ───────────────────────────────────────────
@@ -266,6 +280,7 @@ function closeAddModal() {
 
 function saveManualShipment() {
   const tracking = document.getElementById("add-tracking").value.trim();
+  const sender = document.getElementById("add-sender").value.trim();
   const recipient = document.getElementById("add-recipient").value.trim();
   const note = document.getElementById("add-note").value.trim();
 
@@ -277,6 +292,7 @@ function saveManualShipment() {
   const newShipment = enrichShipment({
     masterTracking: "MAN-" + Date.now(),
     courierTracking: tracking,
+    sender: sender || "",
     recipient: recipient || "Destinatario non specificato",
     state: "TRANSIT",
     date: new Date().toISOString().slice(0, 10),
@@ -291,6 +307,7 @@ function saveManualShipment() {
   showToast("Spedizione aggiunta");
 
   document.getElementById("add-tracking").value = "";
+  document.getElementById("add-sender").value = "";
   document.getElementById("add-recipient").value = "";
   document.getElementById("add-note").value = "";
 }
