@@ -2,7 +2,8 @@
 const state = {
   shipments: [],
   notes: {},       // masterTracking → note text
-  filter: "ALL",
+  filter: "transit",
+  search: "",
   loading: false,
   lastSync: null,
 };
@@ -124,6 +125,17 @@ function renderList() {
     list = list.filter(s => s.status === state.filter.toLowerCase());
   }
 
+  if (state.search) {
+    const q = state.search.toLowerCase();
+    list = list.filter(s =>
+      (s.courierTracking || "").toLowerCase().includes(q) ||
+      (s.masterTracking || "").toLowerCase().includes(q) ||
+      (s.recipient || "").toLowerCase().includes(q) ||
+      (s.companyName || "").toLowerCase().includes(q) ||
+      (s.sender || "").toLowerCase().includes(q)
+    );
+  }
+
   if (list.length === 0) {
     container.innerHTML = `<div class="empty-state">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -211,6 +223,11 @@ function setFilter(f) {
   document.querySelectorAll(".filter-chip").forEach(c => {
     c.classList.toggle("active", c.dataset.filter === f);
   });
+  render();
+}
+
+function setSearch(q) {
+  state.search = q.trim();
   render();
 }
 
