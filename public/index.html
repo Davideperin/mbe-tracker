@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#CC0000">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MBE Tracker">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/style.css">
+  <title>MBE Tracker</title>
+</head>
+<body>
+
+<!-- Loading bar -->
+<div class="loading-bar" id="loading-bar" style="display:none"></div>
+
+<!-- Top bar -->
+<div class="topbar">
+  <div class="topbar-title">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="2" y="7" width="20" height="15" rx="2"/>
+      <path d="M16 7V5a2 2 0 0 0-4 0v2"/>
+    </svg>
+    MBE Tracker
+  </div>
+  <div class="topbar-actions">
+    <button class="icon-btn" onclick="fetchShipments()" title="Aggiorna da MBE">
+      ↺
+    </button>
+  </div>
+</div>
+
+<!-- Stats bar -->
+<div class="stats-bar">
+  <div class="stat-item">
+    <div class="stat-num" id="stat-all">—</div>
+    <div class="stat-lbl">Totali</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-num" id="stat-transit">—</div>
+    <div class="stat-lbl">In transito</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-num" id="stat-delivered">—</div>
+    <div class="stat-lbl">Consegnate</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-num" id="stat-exception">—</div>
+    <div class="stat-lbl">Eccezioni</div>
+  </div>
+</div>
+
+<!-- Filters -->
+<div class="filters">
+  <button class="filter-chip active" data-filter="ALL" onclick="setFilter('ALL')">Tutte</button>
+  <button class="filter-chip" data-filter="transit" onclick="setFilter('transit')">In transito</button>
+  <button class="filter-chip" data-filter="pending" onclick="setFilter('pending')">In attesa</button>
+  <button class="filter-chip" data-filter="delivered" onclick="setFilter('delivered')">Consegnate</button>
+  <button class="filter-chip" data-filter="exception" onclick="setFilter('exception')">Eccezioni</button>
+</div>
+
+<!-- Content -->
+<div class="content">
+  <div id="ptr-indicator" class="ptr-indicator">↓ Tira per aggiornare</div>
+  <div style="font-size:11px;color:var(--text-faint);text-align:right;margin-bottom:10px;" id="last-sync"></div>
+  <div id="shipment-list"></div>
+</div>
+
+<!-- FAB -->
+<button class="fab" onclick="openAddModal()" title="Aggiungi spedizione manuale">+</button>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- Note modal -->
+<div class="modal-overlay" id="note-modal" onclick="if(event.target===this)closeNoteModal()">
+  <div class="modal">
+    <h2>Nota per <span id="note-modal-title"></span></h2>
+    <label>Nota personale</label>
+    <textarea id="note-input" placeholder="Es: Cliente urgente, chiamare al ritiro..."></textarea>
+    <div class="modal-actions">
+      <button class="btn-full secondary" onclick="closeNoteModal()">Annulla</button>
+      <button class="btn-full primary" onclick="saveNote()">Salva nota</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add manual shipment modal -->
+<div class="modal-overlay" id="add-modal" onclick="if(event.target===this)closeAddModal()">
+  <div class="modal">
+    <h2>Aggiungi spedizione</h2>
+    <label>Tracking UPS *</label>
+    <input type="text" id="add-tracking" placeholder="1Z999AA10123456784">
+    <label>Destinatario</label>
+    <input type="text" id="add-recipient" placeholder="Nome cliente o azienda">
+    <label>Nota</label>
+    <textarea id="add-note" placeholder="Note opzionali..."></textarea>
+    <div class="modal-actions">
+      <button class="btn-full secondary" onclick="closeAddModal()">Annulla</button>
+      <button class="btn-full primary" onclick="saveManualShipment()">Aggiungi</button>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
