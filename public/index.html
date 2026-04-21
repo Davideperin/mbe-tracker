@@ -51,11 +51,16 @@
 
 <!-- Filters -->
 <div class="filters">
-  <button class="filter-chip active" data-filter="ALL" onclick="setFilter('ALL')">Tutte</button>
-  <button class="filter-chip" data-filter="transit" onclick="setFilter('transit')">In transito</button>
+  <button class="filter-chip" data-filter="ALL" onclick="setFilter('ALL')">Tutte</button>
+  <button class="filter-chip active" data-filter="transit" onclick="setFilter('transit')">In transito</button>
   <button class="filter-chip" data-filter="pending" onclick="setFilter('pending')">In attesa</button>
   <button class="filter-chip" data-filter="delivered" onclick="setFilter('delivered')">Consegnate</button>
   <button class="filter-chip" data-filter="exception" onclick="setFilter('exception')">Eccezioni</button>
+</div>
+
+<!-- Search bar -->
+<div class="search-bar">
+  <input type="search" id="search-input" placeholder="🔍  Cerca per tracking, mittente o destinatario..." oninput="setSearch(this.value)">
 </div>
 
 <!-- Content -->
