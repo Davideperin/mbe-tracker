@@ -15,112 +15,171 @@ exports.handler = async function (event) {
   const params = event.queryStringParameters || {};
   const action = params.action || "search";
 
-  try {
-    let soapBody = "";
+  // Try multiple endpoints and SOAP formats
+  const endpoints = [
+    "https://api.mbeonline.it/ws/e-link",
+    "https://www.onlinembe.it/ws/e-link",
+    "https://api.mbeonline.it/ws/MBEShipping",
+  ];
 
-    if (action === "search") {
-      const dateFrom = params.dateFrom || "2024-01-01";
-      const dateTo = params.dateTo || new Date().toISOString().slice(0, 10);
-      const state = params.state || "ALL";
+  const soapVariants = buildSOAPVariants(MBE_USER, MBE_PASS, action, params);
 
-      soapBody = `<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ws="http://www.onlinembe.it/ws/">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <ws:SearchShipments>
-      <ws:Credentials>
-        <ws:Username>${MBE_USER}</ws:Username>
-        <ws:Passphrase>${MBE_PASS}</ws:Passphrase>
-      </ws:Credentials>
-      <ws:SearchParameters>
-        <ws:ShipmentState>${state}</ws:ShipmentState>
-        <ws:DateFrom>${dateFrom}</ws:DateFrom>
-        <ws:DateTo>${dateTo}</ws:DateTo>
-      </ws:SearchParameters>
-    </ws:SearchShipments>
-  </soapenv:Body>
-</soapenv:Envelope>`;
-    } else if (action === "detail") {
-      const tracking = params.tracking;
-      soapBody = `<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ws="http://www.onlinembe.it/ws/">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <ws:GetShipment>
-      <ws:Credentials>
-        <ws:Username>${MBE_USER}</ws:Username>
-        <ws:Passphrase>${MBE_PASS}</ws:Passphrase>
-      </ws:Credentials>
-      <ws:MasterTrackingMBE>${tracking}</ws:MasterTrackingMBE>
-    </ws:GetShipment>
-  </soapenv:Body>
-</soapenv:Envelope>`;
+  let lastError = null;
+  let lastRaw = "";
+
+  for (const endpoint of endpoints) {
+    for (const variant of soapVariants) {
+      try {
+        const resp = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "text/xml; charset=utf-8",
+            "SOAPAction": variant.action,
+          },
+          body: variant.body,
+          signal: AbortSignal.timeout(8000),
+        });
+
+        const xml = await resp.text();
+        lastRaw = xml;
+
+        // Check for valid SOAP response (not a fault with no data)
+        if (xml && xml.length > 50 && !xml.includes("Invalid credentials") && !xml.includes("AuthenticationFault")) {
+          const data = parseXML(xml, action);
+          // Return even if data is empty — include raw for debugging
+          return {
+            statusCode: 200,
+            headers,
+            body: JSON.stringify({ ok: true, data, raw: xml, endpoint, variant: variant.name })
+          };
+        }
+      } catch (e) {
+        lastError = e.message;
+      }
     }
-
-    const resp = await fetch("https://api.mbeonline.it/ws/e-link", {
-      method: "POST",
-      headers: {
-        "Content-Type": "text/xml; charset=utf-8",
-        SOAPAction: `"${action === "search" ? "SearchShipments" : "GetShipment"}"`,
-      },
-      body: soapBody,
-    });
-
-    const xml = await resp.text();
-
-    // Parse XML to JSON
-    const shipments = parseShipmentsXML(xml, action);
-
-    return { statusCode: 200, headers, body: JSON.stringify({ ok: true, data: shipments, raw: xml }) };
-  } catch (e) {
-    return { statusCode: 500, headers, body: JSON.stringify({ ok: false, error: e.message }) };
   }
+
+  return {
+    statusCode: 200,
+    headers,
+    body: JSON.stringify({ ok: false, error: lastError, raw: lastRaw })
+  };
 };
 
-function parseShipmentsXML(xml, action) {
-  // Extract shipment items from SOAP response
-  const results = [];
+function buildSOAPVariants(user, pass, action, params) {
+  const dateFrom = params.dateFrom || "2024-01-01";
+  const dateTo = params.dateTo || new Date().toISOString().slice(0, 10);
+  const tracking = params.tracking || "";
+
+  const credentials1 = `<Credentials><Username>${user}</Username><Passphrase>${pass}</Passphrase></Credentials>`;
+  const credentials2 = `<credentials><username>${user}</username><passphrase>${pass}</passphrase></credentials>`;
 
   if (action === "search") {
-    const itemRegex = /<(?:ws:)?ShipmentInfo>([\s\S]*?)<\/(?:ws:)?ShipmentInfo>/gi;
-    let match;
-    while ((match = itemRegex.exec(xml)) !== null) {
-      const block = match[1];
-      results.push({
-        masterTracking: extractTag(block, "MasterTrackingMBE"),
-        courierTracking: extractTag(block, "CourierMasterTracking") || extractTag(block, "TrackingMBE"),
-        state: extractTag(block, "ShipmentState") || extractTag(block, "State"),
-        recipient: extractTag(block, "Name") || extractTag(block, "RecipientName"),
-        city: extractTag(block, "City"),
-        country: extractTag(block, "Country"),
-        date: extractTag(block, "ShipmentDate") || extractTag(block, "Date"),
-        courier: extractTag(block, "CourierName") || extractTag(block, "Courier"),
-        service: extractTag(block, "ServiceName") || extractTag(block, "Service"),
-        reference: extractTag(block, "CustomerReference") || extractTag(block, "Reference"),
-      });
-    }
+    return [
+      {
+        name: "ShipmentsListRequest-v1",
+        action: '"ShipmentsListRequest"',
+        body: `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ws="http://www.onlinembe.it/ws/">
+<soapenv:Header/><soapenv:Body>
+<ws:ShipmentsListRequest>
+${credentials1}
+<DateFrom>${dateFrom}</DateFrom><DateTo>${dateTo}</DateTo>
+</ws:ShipmentsListRequest>
+</soapenv:Body></soapenv:Envelope>`
+      },
+      {
+        name: "SearchShipments-v1",
+        action: '"SearchShipments"',
+        body: `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ws="http://www.onlinembe.it/ws/">
+<soapenv:Header/><soapenv:Body>
+<ws:SearchShipments>
+${credentials1}
+<SearchParameters><DateFrom>${dateFrom}</DateFrom><DateTo>${dateTo}</DateTo></SearchParameters>
+</ws:SearchShipments>
+</soapenv:Body></soapenv:Envelope>`
+      },
+      {
+        name: "ShipmentsListV2Request",
+        action: '"ShipmentsListV2Request"',
+        body: `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ws="http://www.onlinembe.it/ws/">
+<soapenv:Header/><soapenv:Body>
+<ws:ShipmentsListV2Request>
+${credentials1}
+<DateFrom>${dateFrom}</DateFrom><DateTo>${dateTo}</DateTo>
+</ws:ShipmentsListV2Request>
+</soapenv:Body></soapenv:Envelope>`
+      },
+      {
+        name: "ShipmentsListV3Request",
+        action: '"ShipmentsListV3Request"',
+        body: `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ws="http://www.onlinembe.it/ws/">
+<soapenv:Header/><soapenv:Body>
+<ws:ShipmentsListV3Request>
+${credentials1}
+<DateFrom>${dateFrom}</DateFrom><DateTo>${dateTo}</DateTo>
+</ws:ShipmentsListV3Request>
+</soapenv:Body></soapenv:Envelope>`
+      },
+    ];
   } else {
-    // Detail response - look for tracking events
-    const eventRegex = /<(?:ws:)?TrackingEvent>([\s\S]*?)<\/(?:ws:)?TrackingEvent>/gi;
-    let match;
-    while ((match = eventRegex.exec(xml)) !== null) {
-      const block = match[1];
-      results.push({
-        date: extractTag(block, "Date"),
-        time: extractTag(block, "Time"),
-        location: extractTag(block, "Location") || extractTag(block, "City"),
-        description: extractTag(block, "Description") || extractTag(block, "Status"),
-      });
+    return [
+      {
+        name: "TrackingRequest-v1",
+        action: '"TrackingRequest"',
+        body: `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ws="http://www.onlinembe.it/ws/">
+<soapenv:Header/><soapenv:Body>
+<ws:TrackingRequest>
+${credentials1}
+<MasterTrackingsMBE><string>${tracking}</string></MasterTrackingsMBE>
+</ws:TrackingRequest>
+</soapenv:Body></soapenv:Envelope>`
+      },
+    ];
+  }
+}
+
+function parseXML(xml, action) {
+  const results = [];
+  // Try many possible tag patterns for shipment list
+  const patterns = [
+    /ShipmentInfo|ShipmentItem|Shipment|shipment/g,
+  ];
+  // Extract any repeated block that looks like a shipment
+  const blockRegex = /<([A-Za-z:]*(?:Shipment|shipment)[A-Za-z]*)[^>]*>([\s\S]*?)<\/\1>/gi;
+  const found = new Set();
+  let m;
+  while ((m = blockRegex.exec(xml)) !== null) {
+    const tag = m[1];
+    const block = m[2];
+    if (found.has(block)) continue;
+    found.add(block);
+    const obj = {
+      masterTracking: extractTag(block, "MasterTrackingMBE") || extractTag(block, "IdMBE") || extractTag(block, "MBETracking"),
+      courierTracking: extractTag(block, "CourierMasterTracking") || extractTag(block, "CourierTracking") || extractTag(block, "TrackingNumber"),
+      state: extractTag(block, "ShipmentState") || extractTag(block, "State") || extractTag(block, "Status"),
+      recipient: extractTag(block, "Name") || extractTag(block, "RecipientName") || extractTag(block, "Recipient"),
+      city: extractTag(block, "City") || extractTag(block, "RecipientCity"),
+      country: extractTag(block, "Country") || extractTag(block, "RecipientCountry"),
+      date: extractTag(block, "ShipmentDate") || extractTag(block, "Date") || extractTag(block, "CreationDate"),
+      courier: extractTag(block, "CourierName") || extractTag(block, "Courier") || extractTag(block, "CourierService"),
+      service: extractTag(block, "ServiceName") || extractTag(block, "Service") || extractTag(block, "ServiceDesc"),
+      reference: extractTag(block, "CustomerReference") || extractTag(block, "Reference") || extractTag(block, "ExternalReference"),
+    };
+    if (obj.masterTracking || obj.courierTracking || obj.recipient) {
+      results.push(obj);
     }
   }
-
   return results;
 }
 
 function extractTag(xml, tag) {
   const patterns = [
-    new RegExp(`<ws:${tag}>([^<]*)<\/ws:${tag}>`, "i"),
-    new RegExp(`<${tag}>([^<]*)<\/${tag}>`, "i"),
+    new RegExp(`<(?:[a-zA-Z]+:)?${tag}>([^<]*)<\/(?:[a-zA-Z]+:)?${tag}>`, "i"),
   ];
   for (const p of patterns) {
     const m = xml.match(p);
