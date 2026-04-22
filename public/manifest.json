@@ -1,11 +1,11 @@
 {
-  "name": "MBE Tracker",
-  "short_name": "MBE",
-  "description": "Tracciamento spedizioni Mail Boxes Etc.",
+  "name": "Shipment Tracker",
+  "short_name": "Shipments",
+  "description": "Tracciamento spedizioni MBE e PirateShip",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
-  "theme_color": "#CC0000",
+  "theme_color": "#E8943A",
   "orientation": "portrait-primary",
   "icons": [
     { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
