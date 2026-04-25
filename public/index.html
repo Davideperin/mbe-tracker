@@ -10,6 +10,7 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="/style.css">
   <title>Shipment Tracker</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -23,6 +24,7 @@
     <span>Shipment Tracker</span>
   </div>
   <div class="topbar-actions">
+    <button class="icon-btn" onclick="openImportModal()" title="Importa spedizioni">⬆</button>
   </div>
 </div>
 
@@ -104,6 +106,21 @@
     <div class="modal-actions">
       <button class="btn-full secondary" onclick="closeAddModal()">Annulla</button>
       <button class="btn-full primary" onclick="saveManualShipment()">Aggiungi</button>
+    </div>
+  </div>
+</div>
+
+<!-- Import modal -->
+<div class="modal-overlay" id="import-modal" onclick="if(event.target===this)closeImportModal()">
+  <div class="modal">
+    <h2>📥 Importa spedizioni</h2>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">Carica il file esportato da MBE (.xlsx) o da altri corrieri (.csv). Le spedizioni già presenti vengono saltate automaticamente.</p>
+    <label>Seleziona file</label>
+    <input type="file" id="import-file" accept=".xlsx,.xls,.csv" onchange="handleImportFile(this)" style="padding:8px;">
+    <div id="import-preview" style="margin-top:12px;min-height:30px;"></div>
+    <div class="modal-actions">
+      <button class="btn-full secondary" onclick="closeImportModal()">Annulla</button>
+      <button class="btn-full primary" id="import-confirm-btn" onclick="confirmImport()" style="display:none">Importa</button>
     </div>
   </div>
 </div>
