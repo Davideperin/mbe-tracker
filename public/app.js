@@ -164,9 +164,13 @@ function renderCard(s) {
         </div>`).join("")}
       </div>` : "";
 
-  const upsTracking = s.courierTracking || "";
-  const upsLink = upsTracking
-    ? `<a href="https://www.ups.com/track?tracknum=${upsTracking}&loc=it_IT" target="_blank" style="color:var(--blue);text-decoration:none;font-size:11px;font-family:monospace;">${upsTracking} ↗</a>`
+  const trk = s.courierTracking || "";
+  const courierName = courierLabel(s.courier);
+  const trackUrl = courierTrackingUrl(s.courier, trk);
+  const trkLink = trk
+    ? (trackUrl
+        ? `<a href="${trackUrl}" target="_blank" class="tracking-link">${trk} ↗</a>`
+        : `<span style="font-family:var(--mono);font-size:11px;">${trk}</span>`)
     : `<span style="color:var(--text-faint);font-size:11px;">non ancora assegnato</span>`;
 
   return `<div class="shipment-card" id="card-${s.masterTracking}">
@@ -190,7 +194,7 @@ function renderCard(s) {
       </div>
       <div class="detail-row">
         <span class="detail-label">Corriere</span>
-        <span class="detail-value">${s.courier || "UPS"}</span>
+        <span class="detail-value">${courierName}</span>
       </div>
       <div class="detail-row">
         <span class="detail-label">Servizio</span>
@@ -201,8 +205,8 @@ function renderCard(s) {
         <span class="detail-value">${formatDate(s.date)}</span>
       </div>
       <div class="detail-row" style="grid-column: 1 / -1;">
-        <span class="detail-label">Tracking UPS</span>
-        <span class="detail-value">${upsLink}</span>
+        <span class="detail-label">Tracking ${courierName !== "—" ? courierName : ""}</span>
+        <span class="detail-value">${trkLink}</span>
       </div>
     </div>
 
@@ -215,7 +219,7 @@ function renderCard(s) {
         ${s.eventsLoaded ? "Nascondi" : "📍 Storico"}
       </button>
       <button class="btn-sm" onclick="openNoteModal('${s.masterTracking}')">✏️ Nota</button>
-      ${upsTracking ? `<button class="btn-sm primary" onclick="openUPS('${upsTracking}')">Traccia UPS</button>` : ""}
+      ${trk && trackUrl ? `<button class="btn-sm primary" onclick="openTracking('${(s.courier||'').replace(/'/g,'')}', '${trk}')">Traccia ${courierName}</button>` : ""}
       <button class="btn-sm danger" onclick="deleteShipment('${s.masterTracking}')">🗑 Rimuovi</button>
     </div>
   </div>`;
@@ -248,6 +252,41 @@ function toggleEvents(masterTracking) {
 
 function openUPS(tracking) {
   window.open(`https://www.ups.com/track?tracknum=${tracking}&loc=it_IT`, "_blank");
+}
+
+function courierTrackingUrl(courier, tracking) {
+  if (!tracking) return null;
+  const c = (courier || "").toLowerCase();
+  if (c.includes("ups")) return `https://www.ups.com/track?tracknum=${tracking}&loc=it_IT`;
+  if (c.includes("fedex")) return `https://www.fedex.com/fedextrack/?trknbr=${tracking}&trkqual=&cntry_code=it`;
+  if (c.includes("dhl")) return `https://www.dhl.com/it-it/home/tracking/tracking-express.html?submit=1&tracking-id=${tracking}`;
+  if (c.includes("tnt")) return `https://www.tnt.com/express/it_it/site/shipping-tools/tracking.html?searchType=con&cons=${tracking}`;
+  if (c.includes("brt") || c.includes("bartolini")) return `https://vas.brt.it/vas/sped_det_show.hsm?referer=sped_numspe_par.htm&Nspediz=${tracking}`;
+  if (c.includes("gls")) return `https://gls-group.eu/IT/it/servizi-online/track-and-trace?match=${tracking}`;
+  if (c.includes("poste") || c.includes("crono") || c.includes("sda")) return `https://www.poste.it/cerca/index.html#/risultati-spedizioni/${tracking}`;
+  if (c.includes("usps")) return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${tracking}`;
+  // Generic fallback: search 17track
+  return `https://t.17track.net/en#nums=${tracking}`;
+}
+
+function openTracking(courier, tracking) {
+  const url = courierTrackingUrl(courier, tracking);
+  if (url) window.open(url, "_blank");
+}
+
+function courierLabel(courier) {
+  if (!courier) return "—";
+  const c = courier.toLowerCase();
+  if (c.includes("ups")) return "UPS";
+  if (c.includes("fedex")) return "FedEx";
+  if (c.includes("dhl")) return "DHL";
+  if (c.includes("tnt")) return "TNT";
+  if (c.includes("brt") || c.includes("bartolini")) return "BRT";
+  if (c.includes("gls")) return "GLS";
+  if (c.includes("poste") || c.includes("crono")) return "Poste";
+  if (c.includes("sda")) return "SDA";
+  if (c.includes("usps")) return "USPS";
+  return courier;
 }
 
 async function deleteShipment(masterTracking) {
@@ -397,7 +436,7 @@ async function handleImportFile(input) {
       state: r["Stato Spedizione Corriere"] || r["Status"] || "",
       description: r["Descrizione Merce"] || r["Description"] || "",
       reference: r["Riferimento"] || r["Reference"] || "",
-      courier: r["Corriere"] || "UPS",
+      courier: r["Corriere"] || r["courier"] || "",
       source: ext === "xlsx" ? "MBE" : "Import",
     })).filter(r => r.masterTracking || r.courierTracking);
 
