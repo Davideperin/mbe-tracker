@@ -77,26 +77,25 @@ async function fetchDetail(masterTracking) {
 function enrichShipment(s) {
   return {
     ...s,
-    status: normalizeStatus(s.state),
-    progress: statusProgress(s.state),
+    status: normalizeStatus(s.state, s.courierTracking),
+    progress: statusProgress(s.state, s.courierTracking),
     eventsLoaded: false,
     events: s.events || [],
   };
 }
 
-function normalizeStatus(state) {
-  if (!state) return "pending";
+function normalizeStatus(state, courierTracking) {
+  if (!state) return courierTracking ? "transit" : "pending";
   const s = state.toLowerCase();
   if (s.includes("consegn") || s.includes("delivered") || s === "d") return "delivered";
   if (s.includes("eccez") || s.includes("exception") || s === "e" || s.includes("customs") || s.includes("dogana")) return "exception";
   if (s.includes("transit") || s.includes("transito") || s.includes("corso") || s === "t" || s.includes("smist") || s.includes("spedito") || s.includes("shipped")) return "transit";
   if (s.includes("attesa") || s.includes("pending") || s.includes("bozza") || s.includes("draft")) return "pending";
-  // MBE default: se ha un tracking UPS è in transito
-  return "transit";
+  return courierTracking ? "transit" : "pending";
 }
 
-function statusProgress(state) {
-  const s = normalizeStatus(state);
+function statusProgress(state, courierTracking) {
+  const s = normalizeStatus(state, courierTracking);
   return { delivered: 100, transit: 60, exception: 40, pending: 15 }[s] || 15;
 }
 
@@ -335,14 +334,12 @@ function saveManualShipment() {
 
 function openImportModal() {
   document.getElementById("import-modal").classList.add("open");
-  // Setup drag & drop
   const zone = document.getElementById("drop-zone");
-  zone.addEventListener("dragover", e => { e.preventDefault(); zone.style.borderColor = "var(--red)"; zone.style.background = "var(--red-light)"; });
-  zone.addEventListener("dragleave", () => { zone.style.borderColor = "var(--border-strong)"; zone.style.background = ""; });
+  zone.addEventListener("dragover", e => { e.preventDefault(); zone.classList.add("dragover"); });
+  zone.addEventListener("dragleave", () => { zone.classList.remove("dragover"); });
   zone.addEventListener("drop", e => {
     e.preventDefault();
-    zone.style.borderColor = "var(--border-strong)";
-    zone.style.background = "";
+    zone.classList.remove("dragover");
     const file = e.dataTransfer.files[0];
     if (file) {
       const input = document.getElementById("import-file");
