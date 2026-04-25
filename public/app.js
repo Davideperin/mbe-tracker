@@ -398,19 +398,27 @@ function renderActionBar() {
     document.body.appendChild(bar);
   }
   bar.innerHTML = `
-    <div class="action-bar-left">
+    <div class="action-bar-header">
       <button class="action-btn-icon" onclick="clearSelection()" title="Annulla">✕</button>
       <span class="action-count">${state.selected.size} selezionat${state.selected.size === 1 ? "a" : "e"}</span>
+      <button class="action-btn-icon" onclick="selectAllVisible()" title="Seleziona tutto">☑</button>
     </div>
-    <div class="action-bar-right">
-      <button class="action-btn" onclick="selectAllVisible()" title="Seleziona tutto">☑</button>
-      <div class="action-divider"></div>
-      <button class="action-btn" onclick="bulkChangeStatus('transit')" title="In transito">→</button>
-      <button class="action-btn" onclick="bulkChangeStatus('delivered')" title="Consegnata">✓</button>
-      <button class="action-btn" onclick="bulkChangeStatus('pending')" title="In attesa">⏱</button>
-      <button class="action-btn" onclick="bulkChangeStatus('exception')" title="Eccezione">!</button>
-      <div class="action-divider"></div>
-      <button class="action-btn danger" onclick="bulkDelete()" title="Elimina">🗑</button>
+    <div class="action-bar-buttons">
+      <button class="action-btn-text" onclick="bulkChangeStatus('transit')">
+        <span class="action-icon">→</span><span>In transito</span>
+      </button>
+      <button class="action-btn-text" onclick="bulkChangeStatus('delivered')">
+        <span class="action-icon">✓</span><span>Consegnata</span>
+      </button>
+      <button class="action-btn-text" onclick="bulkChangeStatus('pending')">
+        <span class="action-icon">⏱</span><span>In attesa</span>
+      </button>
+      <button class="action-btn-text" onclick="bulkChangeStatus('exception')">
+        <span class="action-icon">!</span><span>Eccezione</span>
+      </button>
+      <button class="action-btn-text danger" onclick="bulkDelete()">
+        <span class="action-icon">🗑</span><span>Elimina</span>
+      </button>
     </div>
   `;
   setTimeout(() => bar.classList.add("show"), 10);
@@ -693,6 +701,11 @@ function parseCSV(file) {
 function setLoading(val) {
   state.loading = val;
   document.getElementById("loading-bar").style.display = val ? "block" : "none";
+  const refreshBtn = document.getElementById("refresh-btn");
+  if (refreshBtn) {
+    if (val) refreshBtn.classList.add("spinning");
+    else refreshBtn.classList.remove("spinning");
+  }
 }
 
 function showToast(msg) {
@@ -764,6 +777,39 @@ async function init() {
     await initApp();
   } else {
     showLoginScreen();
+  }
+
+  // Auto-refresh when app becomes visible again (after being in background)
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && state.user) {
+      const lastSyncMs = state.lastSync ? Date.now() - parseLastSync(state.lastSync) : Infinity;
+      // If more than 2 minutes since last sync, refresh
+      if (lastSyncMs > 2 * 60 * 1000) {
+        loadShipments();
+      }
+    }
+  });
+
+  // Auto-refresh when window gains focus (desktop)
+  window.addEventListener("focus", () => {
+    if (state.user) {
+      const lastSyncMs = state.lastSync ? Date.now() - parseLastSync(state.lastSync) : Infinity;
+      if (lastSyncMs > 2 * 60 * 1000) {
+        loadShipments();
+      }
+    }
+  });
+}
+
+function parseLastSync(s) {
+  if (!s) return 0;
+  // Parse Italian format: "25/04/2026, 17:30:25"
+  try {
+    const [datePart, timePart] = s.split(", ");
+    const [day, month, year] = datePart.split("/");
+    return new Date(`${year}-${month}-${day}T${timePart || "00:00:00"}`).getTime();
+  } catch {
+    return 0;
   }
 }
 
