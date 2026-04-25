@@ -522,7 +522,9 @@ function closeImportModal() {
   document.getElementById("import-modal").classList.remove("open");
   document.getElementById("import-file").value = "";
   document.getElementById("import-preview").innerHTML = "";
-  document.getElementById("import-confirm-btn").style.display = "none";
+  const btn = document.getElementById("import-confirm-btn");
+  btn.style.display = "none";
+  btn.disabled = false;
   importPending = { news: [], updates: [] };
 }
 
@@ -604,6 +606,7 @@ async function handleImportFile(input) {
         <div style="font-size:13px;color:var(--text-muted);margin:8px 0;">${summaryParts.join(" · ")}</div>`;
       document.getElementById("import-confirm-btn").style.display = "block";
       document.getElementById("import-confirm-btn").textContent = `Sincronizza (${totalToProcess})`;
+      document.getElementById("import-confirm-btn").disabled = false;
     }
   } catch (e) {
     preview.innerHTML = `<span style='color:var(--red)'>Errore: ${e.message}</span>`;
