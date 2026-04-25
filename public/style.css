@@ -37,6 +37,16 @@ body {
   font-size: 15px;
   line-height: 1.5;
   min-height: 100dvh;
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+  width: 100%;
+  overflow-x: hidden;
+}
+
+/* Prevent input zoom on iOS */
+input, textarea, select {
+  font-size: 16px !important;
 }
 
 /* ── TOPBAR ── */
