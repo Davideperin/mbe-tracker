@@ -407,39 +407,74 @@ async function handleImportFile(input) {
       return true;
     });
 
-    // Check duplicates against existing
+    // Categorize: new, updated (status changed), unchanged
     const existing = state.shipments;
-    const newOnes = deduped.filter(r => {
-      const key = r.masterTracking || r.courierTracking;
-      return !existing.find(s =>
-        s.masterTracking === r.masterTracking ||
+    const newOnes = [];
+    const updatedOnes = [];
+    let unchanged = 0;
+
+    deduped.forEach(r => {
+      const found = existing.find(s =>
+        (r.masterTracking && s.masterTracking === r.masterTracking) ||
         (r.courierTracking && s.courierTracking === r.courierTracking)
       );
+      if (!found) {
+        newOnes.push(r);
+      } else {
+        const oldStatus = found.status;
+        const newStatus = normalizeStatus(r.state, r.courierTracking);
+        if (oldStatus !== newStatus || found.state !== r.state) {
+          updatedOnes.push({ existing: found, incoming: r, oldStatus, newStatus });
+        } else {
+          unchanged++;
+        }
+      }
     });
-    const duplicates = deduped.length - newOnes.length;
 
-    importPending = newOnes.map(enrichShipment);
+    importPending = {
+      news: newOnes.map(enrichShipment),
+      updates: updatedOnes,
+    };
 
     // Show preview
-    if (newOnes.length === 0) {
-      preview.innerHTML = `<span style='color:var(--amber)'>⚠️ Tutte le ${deduped.length} spedizioni sono già presenti nell'app.</span>`;
+    const totalToProcess = newOnes.length + updatedOnes.length;
+    if (totalToProcess === 0) {
+      preview.innerHTML = `<div class="file-info">✓ Tutte le ${deduped.length} spedizioni sono già aggiornate</div>`;
       document.getElementById("import-confirm-btn").style.display = "none";
     } else {
+      const summaryParts = [];
+      if (newOnes.length) summaryParts.push(`<strong style="color:var(--blue)">${newOnes.length} nuove</strong>`);
+      if (updatedOnes.length) summaryParts.push(`<strong style="color:var(--amber)">${updatedOnes.length} aggiornate</strong>`);
+      if (unchanged) summaryParts.push(`<span style="color:var(--text-faint)">${unchanged} invariate</span>`);
+
+      const previewItems = [
+        ...newOnes.slice(0, 5).map(s => `
+          <div style="padding:6px 10px;border-radius:6px;background:var(--blue-light);margin-bottom:4px;display:flex;gap:8px;align-items:center;font-size:12px;">
+            <span style="background:var(--blue);color:white;font-size:10px;padding:1px 7px;border-radius:99px;font-weight:600;">NEW</span>
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${s.sender || "—"} → ${s.recipient || "—"}</span>
+          </div>`),
+        ...updatedOnes.slice(0, 5).map(u => `
+          <div style="padding:6px 10px;border-radius:6px;background:var(--amber-bg);margin-bottom:4px;display:flex;gap:8px;align-items:center;font-size:12px;">
+            <span style="background:#F59E0B;color:white;font-size:10px;padding:1px 7px;border-radius:99px;font-weight:600;">UPD</span>
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${u.existing.recipient || u.incoming.recipient || "—"}</span>
+            <span style="color:var(--text-muted);font-size:11px;">${statusLabel(u.oldStatus)} → <strong style="color:var(--text)">${statusLabel(u.newStatus)}</strong></span>
+          </div>`),
+      ];
+
       preview.innerHTML = `
-        <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">
-          <strong style="color:var(--text)">${newOnes.length} nuove</strong> spedizioni da importare
-          ${duplicates > 0 ? `· <span style="color:var(--amber)">${duplicates} già presenti (saltate)</span>` : ""}
+        <div style="font-size:13px;color:var(--text-muted);margin:8px 0;">
+          ${summaryParts.join(" · ")}
         </div>
-        <div style="max-height:180px;overflow-y:auto;font-size:12px;">
-          ${newOnes.slice(0, 10).map(s => `
-            <div style="padding:5px 0;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;">
-              <span style="color:var(--text-faint);font-family:monospace;min-width:80px;">${(s.masterTracking||"").slice(-8)}</span>
-              <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${s.sender || "—"} → ${s.recipient || "—"}</span>
-              <span style="color:var(--text-faint)">${s.date || ""}</span>
-            </div>`).join("")}
-          ${newOnes.length > 10 ? `<div style="padding:5px 0;color:var(--text-faint)">... e altre ${newOnes.length - 10}</div>` : ""}
+        <div style="max-height:200px;overflow-y:auto;">
+          ${previewItems.join("")}
+          ${totalToProcess > 10 ? `<div style="padding:6px 10px;color:var(--text-faint);font-size:12px;">... e altre ${totalToProcess - 10}</div>` : ""}
         </div>`;
       document.getElementById("import-confirm-btn").style.display = "block";
+      document.getElementById("import-confirm-btn").textContent = newOnes.length && updatedOnes.length
+        ? `Importa e aggiorna (${totalToProcess})`
+        : newOnes.length
+          ? `Importa ${newOnes.length} ${newOnes.length === 1 ? "spedizione" : "spedizioni"}`
+          : `Aggiorna ${updatedOnes.length} ${updatedOnes.length === 1 ? "spedizione" : "spedizioni"}`;
     }
 
   } catch (e) {
@@ -448,19 +483,41 @@ async function handleImportFile(input) {
 }
 
 async function confirmImport() {
-  if (!importPending.length) return;
-  // Add notes from description field if present
-  importPending.forEach(s => {
+  if (!importPending || (!importPending.news?.length && !importPending.updates?.length)) return;
+
+  // Add new shipments
+  const newOnes = importPending.news || [];
+  newOnes.forEach(s => {
     if (s.description && !state.notes[s.masterTracking]) {
       state.notes[s.masterTracking] = s.description;
     }
   });
-  state.shipments = [...importPending, ...state.shipments];
+
+  // Update existing shipments
+  const updates = importPending.updates || [];
+  updates.forEach(({ existing, incoming }) => {
+    const idx = state.shipments.findIndex(s => s.masterTracking === existing.masterTracking);
+    if (idx >= 0) {
+      state.shipments[idx] = enrichShipment({
+        ...existing,
+        ...incoming,
+        // preserve some local fields
+        events: existing.events,
+        eventsLoaded: existing.eventsLoaded,
+      });
+    }
+  });
+
+  state.shipments = [...newOnes, ...state.shipments];
   state.lastSync = new Date().toLocaleString("it-IT");
   saveLocal();
   closeImportModal();
   render();
-  showToast(`✓ ${importPending.length} spedizioni importate`);
+
+  const msgs = [];
+  if (newOnes.length) msgs.push(`${newOnes.length} nuove`);
+  if (updates.length) msgs.push(`${updates.length} aggiornate`);
+  showToast(`✓ ${msgs.join(" · ")}`);
   importPending = [];
 }
 
@@ -519,9 +576,26 @@ function showToast(msg) {
 
 function formatDate(d) {
   if (!d) return "—";
+  // Handle Italian format DD/MM/YYYY
+  if (typeof d === "string" && d.includes("/")) {
+    const parts = d.split("/");
+    if (parts.length === 3) {
+      const [day, month, year] = parts;
+      const iso = `${year}-${month.padStart(2,"0")}-${day.padStart(2,"0")}`;
+      const date = new Date(iso);
+      if (!isNaN(date)) {
+        return date.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
+      }
+    }
+  }
+  // Handle ISO or other formats
   try {
-    return new Date(d).toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
-  } catch { return d; }
+    const date = new Date(d);
+    if (!isNaN(date)) {
+      return date.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
+    }
+  } catch {}
+  return d; // return as-is if can't parse
 }
 
 function escapeHtml(s) {
