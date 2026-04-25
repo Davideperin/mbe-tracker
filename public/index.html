@@ -13,11 +13,31 @@
   <link rel="stylesheet" href="/style.css">
   <title>Shipment Tracker</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
-<!-- Loading bar -->
 <div class="loading-bar" id="loading-bar" style="display:none"></div>
+
+<!-- ── LOGIN SCREEN ── -->
+<div id="login-screen" class="login-screen">
+  <div class="login-card">
+    <div class="login-logo">📦</div>
+    <h1>Shipment Tracker</h1>
+    <p class="login-subtitle">Accedi per gestire le tue spedizioni</p>
+    <form onsubmit="handleLogin(event)">
+      <label>Email</label>
+      <input type="email" id="login-email" required autocomplete="email">
+      <label>Password</label>
+      <input type="password" id="login-password" required autocomplete="current-password">
+      <div id="login-error" class="login-error"></div>
+      <button type="submit" id="login-btn" class="btn-full primary" style="margin-top:18px;">Accedi</button>
+    </form>
+  </div>
+</div>
+
+<!-- ── APP SCREEN ── -->
+<div id="app-screen" style="display:none;">
 
 <!-- Top bar -->
 <div class="topbar">
@@ -35,30 +55,19 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
       Importa
     </button>
+    <button class="icon-btn" onclick="handleLogout()" title="Esci">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+    </button>
   </div>
 </div>
 
-<!-- Stats bar -->
 <div class="stats-bar">
-  <div class="stat-item">
-    <div class="stat-num" id="stat-all">—</div>
-    <div class="stat-lbl">Totali</div>
-  </div>
-  <div class="stat-item">
-    <div class="stat-num" id="stat-transit">—</div>
-    <div class="stat-lbl">In transito</div>
-  </div>
-  <div class="stat-item">
-    <div class="stat-num" id="stat-delivered">—</div>
-    <div class="stat-lbl">Consegnate</div>
-  </div>
-  <div class="stat-item">
-    <div class="stat-num" id="stat-exception">—</div>
-    <div class="stat-lbl">Eccezioni</div>
-  </div>
+  <div class="stat-item"><div class="stat-num" id="stat-all">—</div><div class="stat-lbl">Totali</div></div>
+  <div class="stat-item"><div class="stat-num" id="stat-transit">—</div><div class="stat-lbl">In transito</div></div>
+  <div class="stat-item"><div class="stat-num" id="stat-delivered">—</div><div class="stat-lbl">Consegnate</div></div>
+  <div class="stat-item"><div class="stat-num" id="stat-exception">—</div><div class="stat-lbl">Eccezioni</div></div>
 </div>
 
-<!-- Filters -->
 <div class="filters">
   <button class="filter-chip" data-filter="ALL" onclick="setFilter('ALL')">Tutte</button>
   <button class="filter-chip active" data-filter="transit" onclick="setFilter('transit')">In transito</button>
@@ -67,45 +76,41 @@
   <button class="filter-chip" data-filter="exception" onclick="setFilter('exception')">Eccezioni</button>
 </div>
 
-<!-- Search bar -->
 <div class="search-bar">
-  <input type="search" id="search-input" placeholder="🔍  Cerca per tracking, mittente o destinatario..." oninput="setSearch(this.value)">
+  <input type="search" id="search-input" placeholder="Cerca per tracking, mittente o destinatario..." oninput="setSearch(this.value)">
 </div>
 
-<!-- Content -->
 <div class="content">
-  <div id="ptr-indicator" class="ptr-indicator">↓ Tira per aggiornare</div>
   <div class="sync-row">
-    <button class="btn-sm" onclick="fetchShipments()">↺ Aggiorna da MBE</button>
+    <button class="btn-sm" onclick="loadShipments()">↺ Sincronizza</button>
     <span id="last-sync"></span>
   </div>
   <div id="shipment-list"></div>
 </div>
 
-<!-- FAB -->
-<button class="fab" onclick="openAddModal()" title="Aggiungi spedizione manuale">+</button>
+<button class="fab" onclick="openAddModal()" title="Aggiungi spedizione">+</button>
 
-<!-- Toast -->
 <div class="toast" id="toast"></div>
 
 <!-- Note modal -->
 <div class="modal-overlay" id="note-modal" onclick="if(event.target===this)closeNoteModal()">
   <div class="modal">
-    <h2>Nota per <span id="note-modal-title"></span></h2>
+    <h2>Nota</h2>
+    <p class="modal-subtitle" id="note-modal-title"></p>
     <label>Nota personale</label>
     <textarea id="note-input" placeholder="Es: Cliente urgente, chiamare al ritiro..."></textarea>
     <div class="modal-actions">
       <button class="btn-full secondary" onclick="closeNoteModal()">Annulla</button>
-      <button class="btn-full primary" onclick="saveNote()">Salva nota</button>
+      <button class="btn-full primary" onclick="saveNote()">Salva</button>
     </div>
   </div>
 </div>
 
-<!-- Add manual shipment modal -->
+<!-- Add manual modal -->
 <div class="modal-overlay" id="add-modal" onclick="if(event.target===this)closeAddModal()">
   <div class="modal">
     <h2>Aggiungi spedizione</h2>
-    <label>Tracking UPS *</label>
+    <label>Tracking *</label>
     <input type="text" id="add-tracking" placeholder="1Z999AA10123456784">
     <label>Mittente</label>
     <input type="text" id="add-sender" placeholder="Chi spedisce">
@@ -124,24 +129,25 @@
 <div class="modal-overlay" id="import-modal" onclick="if(event.target===this)closeImportModal()">
   <div class="modal">
     <h2>Importa spedizioni</h2>
-    <p class="modal-subtitle">Carica il file da MBE (.xlsx) o altri corrieri (.csv). I duplicati vengono saltati automaticamente.</p>
-
+    <p class="modal-subtitle">Carica il file da MBE (.xlsx) o altri corrieri (.csv). Le spedizioni esistenti vengono aggiornate, le nuove aggiunte.</p>
     <div class="drop-zone" id="drop-zone" onclick="document.getElementById('import-file').click()">
       <div class="drop-zone-icon">📂</div>
       <div class="drop-zone-title">Trascina il file qui</div>
       <div class="drop-zone-sub">oppure <strong>clicca per selezionare</strong> · .xlsx o .csv</div>
     </div>
     <input type="file" id="import-file" accept=".xlsx,.xls,.csv" onchange="handleImportFile(this)" style="display:none;">
-
     <div id="import-preview" style="min-height:20px;"></div>
-
     <div class="modal-actions">
       <button class="btn-full secondary" onclick="closeImportModal()">Annulla</button>
-      <button class="btn-full primary" id="import-confirm-btn" onclick="confirmImport()" style="display:none">Importa</button>
+      <button class="btn-full primary" id="import-confirm-btn" onclick="confirmImport()" style="display:none">Sincronizza</button>
     </div>
   </div>
 </div>
 
+</div> <!-- end app-screen -->
+
+<script src="/supabase-config.js"></script>
+<script src="/db.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 // ── STATE ──────────────────────────────────────────────
 const state = {
+  user: null,
   shipments: [],
-  notes: {},       // masterTracking → note text
   filter: "transit",
   search: "",
   loading: false,
@@ -9,68 +9,72 @@ const state = {
   selected: new Set(),
 };
 
-// ── STORAGE ─────────────────────────────────────────────
-function saveLocal() {
-  try {
-    localStorage.setItem("mbe_notes", JSON.stringify(state.notes));
-    localStorage.setItem("mbe_last_sync", state.lastSync || "");
-    localStorage.setItem("mbe_cache", JSON.stringify(state.shipments));
-  } catch {}
+// ── AUTH UI ────────────────────────────────────────────
+function showLoginScreen() {
+  document.getElementById("login-screen").style.display = "flex";
+  document.getElementById("app-screen").style.display = "none";
 }
 
-function loadLocal() {
-  try {
-    state.notes = JSON.parse(localStorage.getItem("mbe_notes") || "{}");
-    state.lastSync = localStorage.getItem("mbe_last_sync") || null;
-    const cache = localStorage.getItem("mbe_cache");
-    if (cache) state.shipments = JSON.parse(cache);
-  } catch {}
+function showAppScreen() {
+  document.getElementById("login-screen").style.display = "none";
+  document.getElementById("app-screen").style.display = "block";
 }
 
-// ── API ─────────────────────────────────────────────────
-async function fetchShipments() {
+async function handleLogin(e) {
+  e.preventDefault();
+  const email = document.getElementById("login-email").value.trim();
+  const password = document.getElementById("login-password").value;
+  const errEl = document.getElementById("login-error");
+  const btn = document.getElementById("login-btn");
+
+  errEl.textContent = "";
+  btn.disabled = true;
+  btn.textContent = "Accesso in corso...";
+
+  try {
+    await signIn(email, password);
+    state.user = await getCurrentUser();
+    showAppScreen();
+    await initApp();
+  } catch (err) {
+    errEl.textContent = err.message || "Credenziali non valide";
+    btn.disabled = false;
+    btn.textContent = "Accedi";
+  }
+}
+
+async function handleLogout() {
+  if (!confirm("Vuoi davvero uscire?")) return;
+  await signOut();
+}
+
+// ── DATA LOAD ──────────────────────────────────────────
+async function loadShipments() {
   setLoading(true);
   try {
-    const dateFrom = "2024-01-01";
-    const dateTo = new Date().toISOString().slice(0, 10);
-    const url = `/api/mbe-proxy?action=search&dateFrom=${dateFrom}&dateTo=${dateTo}&state=ALL`;
-    const resp = await fetch(url);
-    const json = await resp.json();
-
-    if (json.ok && json.data) {
-      state.shipments = json.data.map(enrichShipment);
-      state.lastSync = new Date().toLocaleString("it-IT");
-      saveLocal();
-      showToast("Spedizioni aggiornate ✓");
-    } else {
-      showToast("Errore API: " + (json.error || "risposta non valida"));
-    }
+    state.shipments = await loadShipmentsFromDB();
+    state.lastSync = new Date().toLocaleString("it-IT");
+    saveLocalCache();
   } catch (e) {
-    // Offline: use cache
-    if (state.shipments.length > 0) {
-      showToast("Offline – mostro dati in cache");
-    } else {
-      showToast("Nessuna connessione e nessun dato in cache");
-    }
+    console.error("Load error:", e);
+    showToast("Errore caricamento: " + e.message);
   }
   setLoading(false);
   render();
 }
 
-async function fetchDetail(masterTracking) {
+function saveLocalCache() {
   try {
-    const url = `/api/mbe-proxy?action=detail&tracking=${encodeURIComponent(masterTracking)}`;
-    const resp = await fetch(url);
-    const json = await resp.json();
-    if (json.ok && json.data && json.data.length > 0) {
-      const s = state.shipments.find(x => x.masterTracking === masterTracking);
-      if (s) {
-        s.events = json.data;
-        s.eventsLoaded = true;
-        saveLocal();
-        render();
-      }
-    }
+    localStorage.setItem("mbe_cache", JSON.stringify(state.shipments));
+    localStorage.setItem("mbe_last_sync", state.lastSync || "");
+  } catch {}
+}
+
+function loadLocalCache() {
+  try {
+    const cache = localStorage.getItem("mbe_cache");
+    if (cache) state.shipments = JSON.parse(cache);
+    state.lastSync = localStorage.getItem("mbe_last_sync") || null;
   } catch {}
 }
 
@@ -78,8 +82,8 @@ async function fetchDetail(masterTracking) {
 function enrichShipment(s) {
   return {
     ...s,
-    status: normalizeStatus(s.state, s.courierTracking),
-    progress: statusProgress(s.state, s.courierTracking),
+    status: s.status || normalizeStatus(s.state, s.courierTracking),
+    progress: s.progress || statusProgress(s.state, s.courierTracking),
     eventsLoaded: false,
     events: s.events || [],
   };
@@ -102,6 +106,56 @@ function statusProgress(state, courierTracking) {
 
 function statusLabel(s) {
   return { transit: "In transito", delivered: "Consegnato", pending: "In attesa", exception: "Eccezione" }[s] || "Sconosciuto";
+}
+
+// ── COURIER ──────────────────────────────────────────────
+function detectCourierFromTracking(tracking) {
+  if (!tracking) return "";
+  const t = tracking.trim().toUpperCase();
+  if (/^1Z[A-Z0-9]{16}$/.test(t)) return "UPS";
+  if (/^\d{12}$/.test(t) || /^\d{15}$/.test(t)) return "FedEx";
+  if (/^\d{10}$/.test(t) || /^JJD\d/.test(t)) return "DHL";
+  if (/^(GE|AB)\d{9}/.test(t)) return "TNT";
+  if (/^0\d{11}$/.test(t)) return "BRT";
+  if (/^\d{11,13}$/.test(t) && t.length !== 12) return "GLS";
+  if (/^(94|93|92|95)\d{20}$/.test(t) || /^\d{22}$/.test(t)) return "USPS";
+  return "";
+}
+
+function courierTrackingUrl(courier, tracking) {
+  if (!tracking) return null;
+  if (!courier) courier = detectCourierFromTracking(tracking);
+  const c = (courier || "").toLowerCase();
+  if (c.includes("ups")) return `https://www.ups.com/track?tracknum=${tracking}&loc=it_IT`;
+  if (c.includes("fedex")) return `https://www.fedex.com/fedextrack/?trknbr=${tracking}&trkqual=&cntry_code=it`;
+  if (c.includes("dhl")) return `https://www.dhl.com/it-it/home/tracking/tracking-express.html?submit=1&tracking-id=${tracking}`;
+  if (c.includes("tnt")) return `https://www.tnt.com/express/it_it/site/shipping-tools/tracking.html?searchType=con&cons=${tracking}`;
+  if (c.includes("brt") || c.includes("bartolini")) return `https://vas.brt.it/vas/sped_det_show.hsm?referer=sped_numspe_par.htm&Nspediz=${tracking}`;
+  if (c.includes("gls")) return `https://gls-group.eu/IT/it/servizi-online/track-and-trace?match=${tracking}`;
+  if (c.includes("poste") || c.includes("crono") || c.includes("sda")) return `https://www.poste.it/cerca/index.html#/risultati-spedizioni/${tracking}`;
+  if (c.includes("usps")) return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${tracking}`;
+  return `https://t.17track.net/en#nums=${tracking}`;
+}
+
+function openTracking(courier, tracking) {
+  const url = courierTrackingUrl(courier, tracking);
+  if (url) window.open(url, "_blank");
+}
+
+function courierLabel(courier, tracking) {
+  if (!courier && tracking) courier = detectCourierFromTracking(tracking);
+  if (!courier) return "—";
+  const c = courier.toLowerCase();
+  if (c.includes("ups")) return "UPS";
+  if (c.includes("fedex")) return "FedEx";
+  if (c.includes("dhl")) return "DHL";
+  if (c.includes("tnt")) return "TNT";
+  if (c.includes("brt") || c.includes("bartolini")) return "BRT";
+  if (c.includes("gls")) return "GLS";
+  if (c.includes("poste") || c.includes("crono")) return "Poste";
+  if (c.includes("sda")) return "SDA";
+  if (c.includes("usps")) return "USPS";
+  return courier;
 }
 
 // ── RENDER ───────────────────────────────────────────────
@@ -139,15 +193,11 @@ function renderList() {
     );
   }
 
-  // Sort by date descending (newest first)
   list = [...list].sort((a, b) => parseDateForSort(b.date) - parseDateForSort(a.date));
 
   if (list.length === 0) {
     container.innerHTML = `<div class="empty-state">
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-        <rect x="2" y="7" width="20" height="15" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/>
-      </svg>
-      <p>${state.shipments.length === 0 ? 'Premi ↺ per caricare le spedizioni da MBE' : 'Nessuna spedizione con questo filtro'}</p>
+      <p>${state.shipments.length === 0 ? 'Nessuna spedizione. Importa un CSV per iniziare.' : 'Nessuna spedizione con questo filtro'}</p>
     </div>`;
     return;
   }
@@ -156,7 +206,7 @@ function renderList() {
 }
 
 function renderCard(s) {
-  const note = state.notes[s.masterTracking] || "";
+  const note = s.note || "";
   const eventsHtml = s.eventsLoaded && s.events.length > 0
     ? `<div class="events-panel">${s.events.slice(0, 4).map((e, i) => `
         <div class="event-item">
@@ -248,101 +298,34 @@ function setSearch(q) {
 function toggleEvents(masterTracking) {
   const s = state.shipments.find(x => x.masterTracking === masterTracking);
   if (!s) return;
-  if (!s.eventsLoaded) {
-    fetchDetail(masterTracking);
-  } else {
-    s.eventsLoaded = false;
-    render();
-  }
-}
-
-function openUPS(tracking) {
-  window.open(`https://www.ups.com/track?tracknum=${tracking}&loc=it_IT`, "_blank");
-}
-
-function detectCourierFromTracking(tracking) {
-  if (!tracking) return "";
-  const t = tracking.trim().toUpperCase();
-  // UPS: starts with 1Z, 18 chars
-  if (/^1Z[A-Z0-9]{16}$/.test(t)) return "UPS";
-  // FedEx: 12 or 15 digits, or starts with specific prefixes
-  if (/^\d{12}$/.test(t) || /^\d{15}$/.test(t)) return "FedEx";
-  // DHL Express: 10 digits or JJD prefix
-  if (/^\d{10}$/.test(t) || /^JJD\d/.test(t)) return "DHL";
-  // TNT: 9 digits or GE/AB prefix
-  if (/^(GE|AB)\d{9}/.test(t)) return "TNT";
-  // BRT/Bartolini: typically 12 digits starting with specific patterns
-  if (/^0\d{11}$/.test(t)) return "BRT";
-  // GLS: 11-13 digits
-  if (/^\d{11,13}$/.test(t) && t.length !== 12) return "GLS";
-  // USPS: 20-22 digits or starts with specific letters
-  if (/^(94|93|92|94|95)\d{20}$/.test(t) || /^\d{22}$/.test(t)) return "USPS";
-  return "";
-}
-
-function courierTrackingUrl(courier, tracking) {
-  if (!tracking) return null;
-  // If courier is empty, try to detect it
-  if (!courier) courier = detectCourierFromTracking(tracking);
-  const c = (courier || "").toLowerCase();
-  if (c.includes("ups")) return `https://www.ups.com/track?tracknum=${tracking}&loc=it_IT`;
-  if (c.includes("fedex")) return `https://www.fedex.com/fedextrack/?trknbr=${tracking}&trkqual=&cntry_code=it`;
-  if (c.includes("dhl")) return `https://www.dhl.com/it-it/home/tracking/tracking-express.html?submit=1&tracking-id=${tracking}`;
-  if (c.includes("tnt")) return `https://www.tnt.com/express/it_it/site/shipping-tools/tracking.html?searchType=con&cons=${tracking}`;
-  if (c.includes("brt") || c.includes("bartolini")) return `https://vas.brt.it/vas/sped_det_show.hsm?referer=sped_numspe_par.htm&Nspediz=${tracking}`;
-  if (c.includes("gls")) return `https://gls-group.eu/IT/it/servizi-online/track-and-trace?match=${tracking}`;
-  if (c.includes("poste") || c.includes("crono") || c.includes("sda")) return `https://www.poste.it/cerca/index.html#/risultati-spedizioni/${tracking}`;
-  if (c.includes("usps")) return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${tracking}`;
-  return `https://t.17track.net/en#nums=${tracking}`;
-}
-
-function openTracking(courier, tracking) {
-  const url = courierTrackingUrl(courier, tracking);
-  if (url) window.open(url, "_blank");
-}
-
-function courierLabel(courier, tracking) {
-  // If no courier, detect from tracking
-  if (!courier && tracking) courier = detectCourierFromTracking(tracking);
-  if (!courier) return "—";
-  const c = courier.toLowerCase();
-  if (c.includes("ups")) return "UPS";
-  if (c.includes("fedex")) return "FedEx";
-  if (c.includes("dhl")) return "DHL";
-  if (c.includes("tnt")) return "TNT";
-  if (c.includes("brt") || c.includes("bartolini")) return "BRT";
-  if (c.includes("gls")) return "GLS";
-  if (c.includes("poste") || c.includes("crono")) return "Poste";
-  if (c.includes("sda")) return "SDA";
-  if (c.includes("usps")) return "USPS";
-  return courier;
+  s.eventsLoaded = !s.eventsLoaded;
+  render();
 }
 
 async function deleteShipment(masterTracking) {
   if (!confirm("Rimuovere questa spedizione?")) return;
-  state.shipments = state.shipments.filter(s => s.masterTracking !== masterTracking);
-  delete state.notes[masterTracking];
-  state.selected.delete(masterTracking);
-  saveLocal();
-  render();
-  showToast("Spedizione rimossa");
+  try {
+    await deleteShipmentDB(masterTracking);
+    state.shipments = state.shipments.filter(s => s.masterTracking !== masterTracking);
+    state.selected.delete(masterTracking);
+    saveLocalCache();
+    render();
+    showToast("Spedizione rimossa");
+  } catch (e) {
+    showToast("Errore: " + e.message);
+  }
 }
 
 // ── MULTI SELECTION ──────────────────────────────────────
 function toggleSelect(masterTracking) {
-  if (state.selected.has(masterTracking)) {
-    state.selected.delete(masterTracking);
-  } else {
-    state.selected.add(masterTracking);
-  }
+  if (state.selected.has(masterTracking)) state.selected.delete(masterTracking);
+  else state.selected.add(masterTracking);
   renderActionBar();
-  // Update card visual without full re-render
   const card = document.getElementById(`card-${masterTracking}`);
   if (card) card.classList.toggle("selected", state.selected.has(masterTracking));
 }
 
 function selectAllVisible() {
-  // Get currently visible shipments based on filter+search
   let list = state.shipments;
   if (state.filter !== "ALL") list = list.filter(s => s.status === state.filter.toLowerCase());
   if (state.search) {
@@ -355,11 +338,8 @@ function selectAllVisible() {
     );
   }
   const allSelected = list.every(s => state.selected.has(s.masterTracking));
-  if (allSelected) {
-    list.forEach(s => state.selected.delete(s.masterTracking));
-  } else {
-    list.forEach(s => state.selected.add(s.masterTracking));
-  }
+  if (allSelected) list.forEach(s => state.selected.delete(s.masterTracking));
+  else list.forEach(s => state.selected.add(s.masterTracking));
   render();
 }
 
@@ -368,31 +348,41 @@ function clearSelection() {
   render();
 }
 
-function bulkDelete() {
+async function bulkDelete() {
   const count = state.selected.size;
   if (!count) return;
   if (!confirm(`Rimuovere ${count} spedizion${count === 1 ? "e" : "i"}?`)) return;
-  state.shipments = state.shipments.filter(s => !state.selected.has(s.masterTracking));
-  state.selected.forEach(id => delete state.notes[id]);
-  state.selected.clear();
-  saveLocal();
-  render();
-  showToast(`✓ ${count} spedizion${count === 1 ? "e rimossa" : "i rimosse"}`);
+  try {
+    const ids = Array.from(state.selected);
+    await bulkDeleteDB(ids);
+    state.shipments = state.shipments.filter(s => !state.selected.has(s.masterTracking));
+    state.selected.clear();
+    saveLocalCache();
+    render();
+    showToast(`✓ ${count} spedizion${count === 1 ? "e rimossa" : "i rimosse"}`);
+  } catch (e) {
+    showToast("Errore: " + e.message);
+  }
 }
 
-function bulkChangeStatus(newStatus) {
+async function bulkChangeStatus(newStatus) {
   const count = state.selected.size;
   if (!count) return;
-  state.shipments = state.shipments.map(s => {
-    if (state.selected.has(s.masterTracking)) {
-      return { ...s, status: newStatus, progress: { delivered: 100, transit: 60, exception: 40, pending: 15 }[newStatus] };
-    }
-    return s;
-  });
-  state.selected.clear();
-  saveLocal();
-  render();
-  showToast(`✓ ${count} spedizion${count === 1 ? "e spostata" : "i spostate"} in "${statusLabel(newStatus)}"`);
+  try {
+    const ids = Array.from(state.selected);
+    await bulkUpdateStatusDB(ids, newStatus);
+    const progress = { delivered: 100, transit: 60, exception: 40, pending: 15 }[newStatus];
+    state.shipments = state.shipments.map(s => {
+      if (state.selected.has(s.masterTracking)) return { ...s, status: newStatus, progress };
+      return s;
+    });
+    state.selected.clear();
+    saveLocalCache();
+    render();
+    showToast(`✓ ${count} spedizion${count === 1 ? "e spostata" : "i spostate"} in "${statusLabel(newStatus)}"`);
+  } catch (e) {
+    showToast("Errore: " + e.message);
+  }
 }
 
 function renderActionBar() {
@@ -433,7 +423,7 @@ function openNoteModal(masterTracking) {
   currentNoteTracking = masterTracking;
   const s = state.shipments.find(x => x.masterTracking === masterTracking);
   document.getElementById("note-modal-title").textContent = s ? (s.recipient || masterTracking) : masterTracking;
-  document.getElementById("note-input").value = state.notes[masterTracking] || "";
+  document.getElementById("note-input").value = (s && s.note) || "";
   document.getElementById("note-modal").classList.add("open");
 }
 
@@ -442,21 +432,23 @@ function closeNoteModal() {
   currentNoteTracking = null;
 }
 
-function saveNote() {
+async function saveNote() {
   if (!currentNoteTracking) return;
   const text = document.getElementById("note-input").value.trim();
-  if (text) {
-    state.notes[currentNoteTracking] = text;
-  } else {
-    delete state.notes[currentNoteTracking];
+  try {
+    await updateNoteDB(currentNoteTracking, text);
+    const s = state.shipments.find(x => x.masterTracking === currentNoteTracking);
+    if (s) s.note = text;
+    saveLocalCache();
+    closeNoteModal();
+    render();
+    showToast("Nota salvata");
+  } catch (e) {
+    showToast("Errore: " + e.message);
   }
-  saveLocal();
-  closeNoteModal();
-  render();
-  showToast("Nota salvata");
 }
 
-// ── MANUAL ADD MODAL ─────────────────────────────────────
+// ── ADD MANUAL ───────────────────────────────────────────
 function openAddModal() {
   document.getElementById("add-modal").classList.add("open");
   document.getElementById("add-tracking").focus();
@@ -466,42 +458,47 @@ function closeAddModal() {
   document.getElementById("add-modal").classList.remove("open");
 }
 
-function saveManualShipment() {
+async function saveManualShipment() {
   const tracking = document.getElementById("add-tracking").value.trim();
   const sender = document.getElementById("add-sender").value.trim();
   const recipient = document.getElementById("add-recipient").value.trim();
   const note = document.getElementById("add-note").value.trim();
 
-  if (!tracking) { showToast("Inserisci il tracking UPS"); return; }
+  if (!tracking) { showToast("Inserisci il tracking"); return; }
 
   const exists = state.shipments.find(s => s.courierTracking === tracking || s.masterTracking === tracking);
   if (exists) { showToast("Tracking già presente"); return; }
 
+  const today = new Date().toLocaleDateString("it-IT");
+  const masterTracking = "MAN-" + Date.now();
   const newShipment = enrichShipment({
-    masterTracking: "MAN-" + Date.now(),
+    masterTracking,
     courierTracking: tracking,
     sender: sender || "",
     recipient: recipient || "Destinatario non specificato",
     state: "TRANSIT",
-    date: new Date().toISOString().slice(0, 10),
-    courier: "UPS",
+    date: today,
+    courier: detectCourierFromTracking(tracking),
+    note: note || null,
   });
 
-  if (note) state.notes[newShipment.masterTracking] = note;
-  state.shipments.unshift(newShipment);
-  saveLocal();
-  closeAddModal();
-  render();
-  showToast("Spedizione aggiunta");
-
-  document.getElementById("add-tracking").value = "";
-  document.getElementById("add-sender").value = "";
-  document.getElementById("add-recipient").value = "";
-  document.getElementById("add-note").value = "";
+  try {
+    const inserted = await insertShipments([newShipment]);
+    state.shipments.unshift(...inserted);
+    saveLocalCache();
+    closeAddModal();
+    render();
+    showToast("Spedizione aggiunta");
+    document.getElementById("add-tracking").value = "";
+    document.getElementById("add-sender").value = "";
+    document.getElementById("add-recipient").value = "";
+    document.getElementById("add-note").value = "";
+  } catch (e) {
+    showToast("Errore: " + e.message);
+  }
 }
 
 // ── IMPORT ───────────────────────────────────────────────
-
 function openImportModal() {
   document.getElementById("import-modal").classList.add("open");
   const zone = document.getElementById("drop-zone");
@@ -526,32 +523,24 @@ function closeImportModal() {
   document.getElementById("import-file").value = "";
   document.getElementById("import-preview").innerHTML = "";
   document.getElementById("import-confirm-btn").style.display = "none";
-  importPending = [];
+  importPending = { news: [], updates: [] };
 }
 
-let importPending = [];
+let importPending = { news: [], updates: [] };
 
 async function handleImportFile(input) {
   const file = input.files[0];
   if (!file) return;
-
   const preview = document.getElementById("import-preview");
   preview.innerHTML = "<span style='color:var(--text-faint)'>Lettura file...</span>";
 
   try {
     let rows = [];
     const ext = file.name.split(".").pop().toLowerCase();
+    if (ext === "xlsx" || ext === "xls") rows = await parseXLSX(file);
+    else if (ext === "csv") rows = await parseCSV(file);
+    else { preview.innerHTML = "<span style='color:var(--red)'>Formato non supportato</span>"; return; }
 
-    if (ext === "xlsx" || ext === "xls") {
-      rows = await parseXLSX(file);
-    } else if (ext === "csv") {
-      rows = await parseCSV(file);
-    } else {
-      preview.innerHTML = "<span style='color:var(--red)'>Formato non supportato. Usa .xlsx o .csv</span>";
-      return;
-    }
-
-    // Map MBE columns to shipment objects
     const mapped = rows.map(r => ({
       masterTracking: r["Tracking MBE"] || r["tracking_mbe"] || r["ID"] || "",
       courierTracking: r["Tracking"] || r["tracking"] || r["Tracking Number"] || "",
@@ -568,7 +557,6 @@ async function handleImportFile(input) {
       source: ext === "xlsx" ? "MBE" : "Import",
     })).filter(r => r.masterTracking || r.courierTracking);
 
-    // Deduplicate within file by masterTracking
     const seen = new Set();
     const deduped = mapped.filter(r => {
       const key = r.masterTracking || r.courierTracking;
@@ -577,7 +565,6 @@ async function handleImportFile(input) {
       return true;
     });
 
-    // Categorize: new, updated (status changed), unchanged
     const existing = state.shipments;
     const newOnes = [];
     const updatedOnes = [];
@@ -588,16 +575,13 @@ async function handleImportFile(input) {
         (r.masterTracking && s.masterTracking === r.masterTracking) ||
         (r.courierTracking && s.courierTracking === r.courierTracking)
       );
-      if (!found) {
-        newOnes.push(r);
-      } else {
+      if (!found) newOnes.push(r);
+      else {
         const oldStatus = found.status;
         const newStatus = normalizeStatus(r.state, r.courierTracking);
         if (oldStatus !== newStatus || found.state !== r.state) {
           updatedOnes.push({ existing: found, incoming: r, oldStatus, newStatus });
-        } else {
-          unchanged++;
-        }
+        } else unchanged++;
       }
     });
 
@@ -606,7 +590,6 @@ async function handleImportFile(input) {
       updates: updatedOnes,
     };
 
-    // Show preview
     const totalToProcess = newOnes.length + updatedOnes.length;
     if (totalToProcess === 0) {
       preview.innerHTML = `<div class="file-info">✓ Tutte le ${deduped.length} spedizioni sono già aggiornate</div>`;
@@ -617,81 +600,54 @@ async function handleImportFile(input) {
       if (updatedOnes.length) summaryParts.push(`<strong style="color:var(--amber)">${updatedOnes.length} aggiornate</strong>`);
       if (unchanged) summaryParts.push(`<span style="color:var(--text-faint)">${unchanged} invariate</span>`);
 
-      const previewItems = [
-        ...newOnes.slice(0, 5).map(s => `
-          <div style="padding:6px 10px;border-radius:6px;background:var(--blue-light);margin-bottom:4px;display:flex;gap:8px;align-items:center;font-size:12px;">
-            <span style="background:var(--blue);color:white;font-size:10px;padding:1px 7px;border-radius:99px;font-weight:600;">NEW</span>
-            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${s.sender || "—"} → ${s.recipient || "—"}</span>
-          </div>`),
-        ...updatedOnes.slice(0, 5).map(u => `
-          <div style="padding:6px 10px;border-radius:6px;background:var(--amber-bg);margin-bottom:4px;display:flex;gap:8px;align-items:center;font-size:12px;">
-            <span style="background:#F59E0B;color:white;font-size:10px;padding:1px 7px;border-radius:99px;font-weight:600;">UPD</span>
-            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${u.existing.recipient || u.incoming.recipient || "—"}</span>
-            <span style="color:var(--text-muted);font-size:11px;">${statusLabel(u.oldStatus)} → <strong style="color:var(--text)">${statusLabel(u.newStatus)}</strong></span>
-          </div>`),
-      ];
-
       preview.innerHTML = `
-        <div style="font-size:13px;color:var(--text-muted);margin:8px 0;">
-          ${summaryParts.join(" · ")}
-        </div>
-        <div style="max-height:200px;overflow-y:auto;">
-          ${previewItems.join("")}
-          ${totalToProcess > 10 ? `<div style="padding:6px 10px;color:var(--text-faint);font-size:12px;">... e altre ${totalToProcess - 10}</div>` : ""}
-        </div>`;
+        <div style="font-size:13px;color:var(--text-muted);margin:8px 0;">${summaryParts.join(" · ")}</div>`;
       document.getElementById("import-confirm-btn").style.display = "block";
-      document.getElementById("import-confirm-btn").textContent = newOnes.length && updatedOnes.length
-        ? `Importa e aggiorna (${totalToProcess})`
-        : newOnes.length
-          ? `Importa ${newOnes.length} ${newOnes.length === 1 ? "spedizione" : "spedizioni"}`
-          : `Aggiorna ${updatedOnes.length} ${updatedOnes.length === 1 ? "spedizione" : "spedizioni"}`;
+      document.getElementById("import-confirm-btn").textContent = `Sincronizza (${totalToProcess})`;
     }
-
   } catch (e) {
-    preview.innerHTML = `<span style='color:var(--red)'>Errore nella lettura: ${e.message}</span>`;
+    preview.innerHTML = `<span style='color:var(--red)'>Errore: ${e.message}</span>`;
   }
 }
 
 async function confirmImport() {
-  if (!importPending || (!importPending.news?.length && !importPending.updates?.length)) return;
+  if (!importPending.news.length && !importPending.updates.length) return;
+  const btn = document.getElementById("import-confirm-btn");
+  btn.disabled = true;
+  btn.textContent = "Sincronizzazione...";
 
-  // Add new shipments
-  const newOnes = importPending.news || [];
-  newOnes.forEach(s => {
-    if (s.description && !state.notes[s.masterTracking]) {
-      state.notes[s.masterTracking] = s.description;
+  try {
+    // Insert new
+    if (importPending.news.length) {
+      const inserted = await insertShipments(importPending.news);
+      state.shipments.unshift(...inserted);
     }
-  });
 
-  // Update existing shipments
-  const updates = importPending.updates || [];
-  updates.forEach(({ existing, incoming }) => {
-    const idx = state.shipments.findIndex(s => s.masterTracking === existing.masterTracking);
-    if (idx >= 0) {
-      state.shipments[idx] = enrichShipment({
-        ...existing,
-        ...incoming,
-        // preserve some local fields
-        events: existing.events,
-        eventsLoaded: existing.eventsLoaded,
-      });
+    // Update existing
+    for (const { existing, incoming } of importPending.updates) {
+      const merged = enrichShipment({ ...existing, ...incoming });
+      await updateShipmentDB(existing.masterTracking, merged);
+      const idx = state.shipments.findIndex(s => s.masterTracking === existing.masterTracking);
+      if (idx >= 0) state.shipments[idx] = merged;
     }
-  });
 
-  state.shipments = [...newOnes, ...state.shipments];
-  state.lastSync = new Date().toLocaleString("it-IT");
-  saveLocal();
-  closeImportModal();
-  render();
+    state.lastSync = new Date().toLocaleString("it-IT");
+    saveLocalCache();
+    closeImportModal();
+    render();
 
-  const msgs = [];
-  if (newOnes.length) msgs.push(`${newOnes.length} nuove`);
-  if (updates.length) msgs.push(`${updates.length} aggiornate`);
-  showToast(`✓ ${msgs.join(" · ")}`);
-  importPending = [];
+    const msgs = [];
+    if (importPending.news.length) msgs.push(`${importPending.news.length} nuove`);
+    if (importPending.updates.length) msgs.push(`${importPending.updates.length} aggiornate`);
+    showToast(`✓ ${msgs.join(" · ")}`);
+    importPending = { news: [], updates: [] };
+  } catch (e) {
+    showToast("Errore: " + e.message);
+    btn.disabled = false;
+    btn.textContent = "Riprova";
+  }
 }
 
-// Parse XLSX using SheetJS (loaded from CDN in HTML)
 function parseXLSX(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -700,8 +656,7 @@ function parseXLSX(file) {
         const data = new Uint8Array(e.target.result);
         const workbook = XLSX.read(data, { type: "array" });
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
-        resolve(rows);
+        resolve(XLSX.utils.sheet_to_json(sheet, { defval: "" }));
       } catch (err) { reject(err); }
     };
     reader.onerror = reject;
@@ -709,7 +664,6 @@ function parseXLSX(file) {
   });
 }
 
-// Parse CSV
 function parseCSV(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -731,10 +685,11 @@ function parseCSV(file) {
     reader.readAsText(file, "UTF-8");
   });
 }
+
+// ── UTILS ─────────────────────────────────────────────────
 function setLoading(val) {
   state.loading = val;
-  const bar = document.getElementById("loading-bar");
-  bar.style.display = val ? "block" : "none";
+  document.getElementById("loading-bar").style.display = val ? "block" : "none";
 }
 
 function showToast(msg) {
@@ -746,24 +701,17 @@ function showToast(msg) {
 
 function formatDate(d) {
   if (!d) return "—";
-  // Handle Italian format DD/MM/YYYY
   if (typeof d === "string" && d.includes("/")) {
     const parts = d.split("/");
     if (parts.length === 3) {
       const [day, month, year] = parts;
-      const iso = `${year}-${month.padStart(2,"0")}-${day.padStart(2,"0")}`;
-      const date = new Date(iso);
-      if (!isNaN(date)) {
-        return date.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
-      }
+      const date = new Date(`${year}-${month.padStart(2,"0")}-${day.padStart(2,"0")}`);
+      if (!isNaN(date)) return date.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
     }
   }
-  // Handle ISO or other formats
   try {
     const date = new Date(d);
-    if (!isNaN(date)) {
-      return date.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
-    }
+    if (!isNaN(date)) return date.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
   } catch {}
   return d;
 }
@@ -782,50 +730,37 @@ function parseDateForSort(d) {
   return isNaN(t) ? 0 : t;
 }
 
-function cleanupOldDelivered() {
-  const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
-  const cutoff = Date.now() - ONE_MONTH_MS;
-  const before = state.shipments.length;
-
-  state.shipments = state.shipments.filter(s => {
-    if (s.status !== "delivered") return true;
-    const date = parseDateForSort(s.date);
-    if (!date) return true; // keep if no valid date
-    return date > cutoff;
-  });
-
-  const removed = before - state.shipments.length;
-  if (removed > 0) {
-    // Cleanup notes for removed shipments
-    const remainingIds = new Set(state.shipments.map(s => s.masterTracking));
-    Object.keys(state.notes).forEach(k => {
-      if (!remainingIds.has(k)) delete state.notes[k];
-    });
-    saveLocal();
-    setTimeout(() => showToast(`🧹 ${removed} ${removed === 1 ? "spedizione consegnata" : "spedizioni consegnate"} da oltre 1 mese ${removed === 1 ? "rimossa" : "rimosse"}`), 800);
-  }
-}
-
 function escapeHtml(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 // ── INIT ──────────────────────────────────────────────────
-function init() {
-  loadLocal();
-  cleanupOldDelivered();
+async function initApp() {
+  loadLocalCache();
   render();
+  await loadShipments();
+  // Cleanup old delivered in background
+  cleanupOldDeliveredDB().then(removed => {
+    if (removed > 0) {
+      showToast(`🧹 ${removed} spedizioni consegnate da oltre 1 mese rimosse`);
+      loadShipments();
+    }
+  }).catch(() => {});
+}
 
-  // Register service worker
+async function init() {
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(() => {});
   }
 
-  // Auto-refresh if data is stale (> 30 min)
-  if (state.lastSync) {
-    const last = new Date(state.lastSync.split(",").join("").replace(/(\d{2})\/(\d{2})\/(\d{4})/, "$3-$2-$1"));
-    const diff = (Date.now() - last) / 1000 / 60;
-    if (diff > 30) fetchShipments();
+  // Check existing session
+  const user = await getCurrentUser();
+  if (user) {
+    state.user = user;
+    showAppScreen();
+    await initApp();
+  } else {
+    showLoginScreen();
   }
 }
 
