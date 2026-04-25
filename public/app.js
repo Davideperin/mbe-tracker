@@ -6,6 +6,7 @@ const state = {
   search: "",
   loading: false,
   lastSync: null,
+  selected: new Set(),
 };
 
 // ── STORAGE ─────────────────────────────────────────────
@@ -107,6 +108,7 @@ function statusLabel(s) {
 function render() {
   renderStats();
   renderList();
+  renderActionBar();
   document.getElementById("last-sync").textContent = state.lastSync ? `Aggiornato: ${state.lastSync}` : "Non ancora sincronizzato";
 }
 
@@ -165,7 +167,7 @@ function renderCard(s) {
       </div>` : "";
 
   const trk = s.courierTracking || "";
-  const courierName = courierLabel(s.courier);
+  const courierName = courierLabel(s.courier, trk);
   const trackUrl = courierTrackingUrl(s.courier, trk);
   const trkLink = trk
     ? (trackUrl
@@ -173,8 +175,12 @@ function renderCard(s) {
         : `<span style="font-family:var(--mono);font-size:11px;">${trk}</span>`)
     : `<span style="color:var(--text-faint);font-size:11px;">non ancora assegnato</span>`;
 
-  return `<div class="shipment-card" id="card-${s.masterTracking}">
+  return `<div class="shipment-card ${state.selected.has(s.masterTracking) ? 'selected' : ''}" id="card-${s.masterTracking}">
     <div class="card-header">
+      <label class="card-checkbox" onclick="event.stopPropagation()">
+        <input type="checkbox" ${state.selected.has(s.masterTracking) ? 'checked' : ''} onchange="toggleSelect('${s.masterTracking}')">
+        <span class="checkbox-mark"></span>
+      </label>
       <div class="card-left">
         <div class="card-recipient">${s.recipient || "Destinatario sconosciuto"}</div>
         <div class="card-ref">${s.city || ""}${s.country && s.country !== "IT" ? " · " + s.country : ""}${s.reference ? " · Rif: " + s.reference : ""}</div>
@@ -254,8 +260,30 @@ function openUPS(tracking) {
   window.open(`https://www.ups.com/track?tracknum=${tracking}&loc=it_IT`, "_blank");
 }
 
+function detectCourierFromTracking(tracking) {
+  if (!tracking) return "";
+  const t = tracking.trim().toUpperCase();
+  // UPS: starts with 1Z, 18 chars
+  if (/^1Z[A-Z0-9]{16}$/.test(t)) return "UPS";
+  // FedEx: 12 or 15 digits, or starts with specific prefixes
+  if (/^\d{12}$/.test(t) || /^\d{15}$/.test(t)) return "FedEx";
+  // DHL Express: 10 digits or JJD prefix
+  if (/^\d{10}$/.test(t) || /^JJD\d/.test(t)) return "DHL";
+  // TNT: 9 digits or GE/AB prefix
+  if (/^(GE|AB)\d{9}/.test(t)) return "TNT";
+  // BRT/Bartolini: typically 12 digits starting with specific patterns
+  if (/^0\d{11}$/.test(t)) return "BRT";
+  // GLS: 11-13 digits
+  if (/^\d{11,13}$/.test(t) && t.length !== 12) return "GLS";
+  // USPS: 20-22 digits or starts with specific letters
+  if (/^(94|93|92|94|95)\d{20}$/.test(t) || /^\d{22}$/.test(t)) return "USPS";
+  return "";
+}
+
 function courierTrackingUrl(courier, tracking) {
   if (!tracking) return null;
+  // If courier is empty, try to detect it
+  if (!courier) courier = detectCourierFromTracking(tracking);
   const c = (courier || "").toLowerCase();
   if (c.includes("ups")) return `https://www.ups.com/track?tracknum=${tracking}&loc=it_IT`;
   if (c.includes("fedex")) return `https://www.fedex.com/fedextrack/?trknbr=${tracking}&trkqual=&cntry_code=it`;
@@ -265,7 +293,6 @@ function courierTrackingUrl(courier, tracking) {
   if (c.includes("gls")) return `https://gls-group.eu/IT/it/servizi-online/track-and-trace?match=${tracking}`;
   if (c.includes("poste") || c.includes("crono") || c.includes("sda")) return `https://www.poste.it/cerca/index.html#/risultati-spedizioni/${tracking}`;
   if (c.includes("usps")) return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${tracking}`;
-  // Generic fallback: search 17track
   return `https://t.17track.net/en#nums=${tracking}`;
 }
 
@@ -274,7 +301,9 @@ function openTracking(courier, tracking) {
   if (url) window.open(url, "_blank");
 }
 
-function courierLabel(courier) {
+function courierLabel(courier, tracking) {
+  // If no courier, detect from tracking
+  if (!courier && tracking) courier = detectCourierFromTracking(tracking);
   if (!courier) return "—";
   const c = courier.toLowerCase();
   if (c.includes("ups")) return "UPS";
@@ -293,9 +322,108 @@ async function deleteShipment(masterTracking) {
   if (!confirm("Rimuovere questa spedizione?")) return;
   state.shipments = state.shipments.filter(s => s.masterTracking !== masterTracking);
   delete state.notes[masterTracking];
+  state.selected.delete(masterTracking);
   saveLocal();
   render();
   showToast("Spedizione rimossa");
+}
+
+// ── MULTI SELECTION ──────────────────────────────────────
+function toggleSelect(masterTracking) {
+  if (state.selected.has(masterTracking)) {
+    state.selected.delete(masterTracking);
+  } else {
+    state.selected.add(masterTracking);
+  }
+  renderActionBar();
+  // Update card visual without full re-render
+  const card = document.getElementById(`card-${masterTracking}`);
+  if (card) card.classList.toggle("selected", state.selected.has(masterTracking));
+}
+
+function selectAllVisible() {
+  // Get currently visible shipments based on filter+search
+  let list = state.shipments;
+  if (state.filter !== "ALL") list = list.filter(s => s.status === state.filter.toLowerCase());
+  if (state.search) {
+    const q = state.search.toLowerCase();
+    list = list.filter(s =>
+      (s.courierTracking || "").toLowerCase().includes(q) ||
+      (s.masterTracking || "").toLowerCase().includes(q) ||
+      (s.recipient || "").toLowerCase().includes(q) ||
+      (s.sender || "").toLowerCase().includes(q)
+    );
+  }
+  const allSelected = list.every(s => state.selected.has(s.masterTracking));
+  if (allSelected) {
+    list.forEach(s => state.selected.delete(s.masterTracking));
+  } else {
+    list.forEach(s => state.selected.add(s.masterTracking));
+  }
+  render();
+}
+
+function clearSelection() {
+  state.selected.clear();
+  render();
+}
+
+function bulkDelete() {
+  const count = state.selected.size;
+  if (!count) return;
+  if (!confirm(`Rimuovere ${count} spedizion${count === 1 ? "e" : "i"}?`)) return;
+  state.shipments = state.shipments.filter(s => !state.selected.has(s.masterTracking));
+  state.selected.forEach(id => delete state.notes[id]);
+  state.selected.clear();
+  saveLocal();
+  render();
+  showToast(`✓ ${count} spedizion${count === 1 ? "e rimossa" : "i rimosse"}`);
+}
+
+function bulkChangeStatus(newStatus) {
+  const count = state.selected.size;
+  if (!count) return;
+  state.shipments = state.shipments.map(s => {
+    if (state.selected.has(s.masterTracking)) {
+      return { ...s, status: newStatus, progress: { delivered: 100, transit: 60, exception: 40, pending: 15 }[newStatus] };
+    }
+    return s;
+  });
+  state.selected.clear();
+  saveLocal();
+  render();
+  showToast(`✓ ${count} spedizion${count === 1 ? "e spostata" : "i spostate"} in "${statusLabel(newStatus)}"`);
+}
+
+function renderActionBar() {
+  let bar = document.getElementById("action-bar");
+  if (state.selected.size === 0) {
+    if (bar) bar.classList.remove("show");
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "action-bar";
+    bar.className = "action-bar";
+    document.body.appendChild(bar);
+  }
+  bar.innerHTML = `
+    <div class="action-bar-left">
+      <button class="action-btn-icon" onclick="clearSelection()" title="Annulla">✕</button>
+      <span class="action-count">${state.selected.size} selezionat${state.selected.size === 1 ? "a" : "e"}</span>
+    </div>
+    <div class="action-bar-right">
+      <button class="action-btn" onclick="selectAllVisible()" title="Seleziona tutto">☑</button>
+      <div class="action-divider"></div>
+      <button class="action-btn" onclick="bulkChangeStatus('transit')" title="In transito">→</button>
+      <button class="action-btn" onclick="bulkChangeStatus('delivered')" title="Consegnata">✓</button>
+      <button class="action-btn" onclick="bulkChangeStatus('pending')" title="In attesa">⏱</button>
+      <button class="action-btn" onclick="bulkChangeStatus('exception')" title="Eccezione">!</button>
+      <div class="action-divider"></div>
+      <button class="action-btn danger" onclick="bulkDelete()" title="Elimina">🗑</button>
+    </div>
+  `;
+  setTimeout(() => bar.classList.add("show"), 10);
 }
 
 // ── NOTE MODAL ───────────────────────────────────────────
