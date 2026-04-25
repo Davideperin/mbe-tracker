@@ -2,13 +2,13 @@
 
 // ── AUTH ─────────────────────────────────────────────────
 async function signIn(email, password) {
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
   if (error) throw error;
   return data;
 }
 
 async function signOut() {
-  await supabase.auth.signOut();
+  await sb.auth.signOut();
   state.user = null;
   state.shipments = [];
   state.notes = {};
@@ -16,7 +16,7 @@ async function signOut() {
 }
 
 async function getCurrentUser() {
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { user } } = await sb.auth.getUser();
   return user;
 }
 
@@ -73,7 +73,7 @@ function appToDb(s) {
 }
 
 async function loadShipmentsFromDB() {
-  const { data, error } = await supabase
+  const { data, error } = await sb
     .from("shipments")
     .select("*")
     .order("date", { ascending: false });
@@ -84,7 +84,7 @@ async function loadShipmentsFromDB() {
 async function insertShipments(shipments) {
   if (!shipments.length) return [];
   const rows = shipments.map(appToDb);
-  const { data, error } = await supabase
+  const { data, error } = await sb
     .from("shipments")
     .insert(rows)
     .select();
@@ -93,7 +93,7 @@ async function insertShipments(shipments) {
 }
 
 async function updateShipmentDB(masterTracking, updates) {
-  const { data, error } = await supabase
+  const { data, error } = await sb
     .from("shipments")
     .update(appToDb(updates))
     .eq("master_tracking", masterTracking)
@@ -104,7 +104,7 @@ async function updateShipmentDB(masterTracking, updates) {
 }
 
 async function deleteShipmentDB(masterTracking) {
-  const { error } = await supabase
+  const { error } = await sb
     .from("shipments")
     .delete()
     .eq("master_tracking", masterTracking);
@@ -112,7 +112,7 @@ async function deleteShipmentDB(masterTracking) {
 }
 
 async function bulkDeleteDB(masterTrackings) {
-  const { error } = await supabase
+  const { error } = await sb
     .from("shipments")
     .delete()
     .in("master_tracking", masterTrackings);
@@ -121,7 +121,7 @@ async function bulkDeleteDB(masterTrackings) {
 
 async function bulkUpdateStatusDB(masterTrackings, newStatus) {
   const progress = { delivered: 100, transit: 60, exception: 40, pending: 15 }[newStatus] || 15;
-  const { error } = await supabase
+  const { error } = await sb
     .from("shipments")
     .update({ status: newStatus, progress })
     .in("master_tracking", masterTrackings);
@@ -129,7 +129,7 @@ async function bulkUpdateStatusDB(masterTrackings, newStatus) {
 }
 
 async function updateNoteDB(masterTracking, note) {
-  const { error } = await supabase
+  const { error } = await sb
     .from("shipments")
     .update({ note })
     .eq("master_tracking", masterTracking);
@@ -138,7 +138,7 @@ async function updateNoteDB(masterTracking, note) {
 
 // Cleanup old delivered shipments (>30 days)
 async function cleanupOldDeliveredDB() {
-  const { data, error } = await supabase
+  const { data, error } = await sb
     .from("shipments")
     .select("id, date, status")
     .eq("status", "delivered");
@@ -152,6 +152,6 @@ async function cleanupOldDeliveredDB() {
 
   if (!toDelete.length) return 0;
 
-  await supabase.from("shipments").delete().in("id", toDelete);
+  await sb.from("shipments").delete().in("id", toDelete);
   return toDelete.length;
 }
