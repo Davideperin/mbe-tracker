@@ -1,5 +1,5 @@
-const CACHE = "mbe-tracker-v1";
-const ASSETS = ["/", "/index.html", "/app.js", "/style.css", "/manifest.json"];
+const CACHE = "shipment-tracker-v" + Date.now();
+const ASSETS = ["/", "/index.html", "/app.js", "/db.js", "/supabase-config.js", "/style.css", "/manifest.json"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
@@ -14,11 +14,20 @@ self.addEventListener("activate", e => {
 });
 
 self.addEventListener("fetch", e => {
-  // Network first for API calls
-  if (e.request.url.includes("/api/")) {
-    e.respondWith(fetch(e.request).catch(() => new Response(JSON.stringify({ ok: false, error: "Offline" }), { headers: { "Content-Type": "application/json" } })));
+  // Network-first for HTML and JS files (always check for updates)
+  if (e.request.url.match(/\.(html|js|css|json)$/) || e.request.mode === "navigate") {
+    e.respondWith(
+      fetch(e.request)
+        .then(resp => {
+          // Update cache in background
+          const respClone = resp.clone();
+          caches.open(CACHE).then(c => c.put(e.request, respClone));
+          return resp;
+        })
+        .catch(() => caches.match(e.request))
+    );
     return;
   }
-  // Cache first for assets
+  // Cache-first for other assets (images, etc.)
   e.respondWith(caches.match(e.request).then(cached => cached || fetch(e.request)));
 });
