@@ -88,9 +88,11 @@ function normalizeStatus(state) {
   if (!state) return "pending";
   const s = state.toLowerCase();
   if (s.includes("consegn") || s.includes("delivered") || s === "d") return "delivered";
-  if (s.includes("transit") || s.includes("corso") || s === "t" || s.includes("smist")) return "transit";
-  if (s.includes("eccez") || s.includes("exception") || s === "e") return "exception";
-  return "pending";
+  if (s.includes("eccez") || s.includes("exception") || s === "e" || s.includes("customs") || s.includes("dogana")) return "exception";
+  if (s.includes("transit") || s.includes("transito") || s.includes("corso") || s === "t" || s.includes("smist") || s.includes("spedito") || s.includes("shipped")) return "transit";
+  if (s.includes("attesa") || s.includes("pending") || s.includes("bozza") || s.includes("draft")) return "pending";
+  // MBE default: se ha un tracking UPS è in transito
+  return "transit";
 }
 
 function statusProgress(state) {
@@ -333,6 +335,23 @@ function saveManualShipment() {
 
 function openImportModal() {
   document.getElementById("import-modal").classList.add("open");
+  // Setup drag & drop
+  const zone = document.getElementById("drop-zone");
+  zone.addEventListener("dragover", e => { e.preventDefault(); zone.style.borderColor = "var(--red)"; zone.style.background = "var(--red-light)"; });
+  zone.addEventListener("dragleave", () => { zone.style.borderColor = "var(--border-strong)"; zone.style.background = ""; });
+  zone.addEventListener("drop", e => {
+    e.preventDefault();
+    zone.style.borderColor = "var(--border-strong)";
+    zone.style.background = "";
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      const input = document.getElementById("import-file");
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+      handleImportFile(input);
+    }
+  });
 }
 
 function closeImportModal() {
