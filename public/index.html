@@ -20,10 +20,19 @@
 <!-- Top bar -->
 <div class="topbar">
   <div class="topbar-title">
-    <span>Shipment Tracker</span>
+    <div class="logo-dot">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <rect x="2" y="7" width="20" height="15" rx="2"/>
+        <path d="M16 7V5a2 2 0 0 0-4 0v2"/>
+      </svg>
+    </div>
+    Shipment Tracker
   </div>
   <div class="topbar-actions">
-    <button class="icon-btn" onclick="openImportModal()" title="Importa spedizioni">⬆</button>
+    <button class="icon-btn" onclick="openImportModal()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Importa
+    </button>
   </div>
 </div>
 
@@ -64,8 +73,8 @@
 <!-- Content -->
 <div class="content">
   <div id="ptr-indicator" class="ptr-indicator">↓ Tira per aggiornare</div>
-  <div style="font-size:11px;color:var(--text-faint);text-align:right;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;">
-    <button class="btn-sm" style="font-size:13px;padding:6px 14px;" onclick="fetchShipments()">↺ Aggiorna da MBE</button>
+  <div class="sync-row">
+    <button class="btn-sm" onclick="fetchShipments()">↺ Aggiorna da MBE</button>
     <span id="last-sync"></span>
   </div>
   <div id="shipment-list"></div>
@@ -112,16 +121,18 @@
 <!-- Import modal -->
 <div class="modal-overlay" id="import-modal" onclick="if(event.target===this)closeImportModal()">
   <div class="modal">
-    <h2>📥 Importa spedizioni</h2>
-    <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">Carica il file esportato da MBE (.xlsx) o da altri corrieri (.csv). Le spedizioni già presenti vengono saltate automaticamente.</p>
-    <div id="drop-zone" onclick="document.getElementById('import-file').click()"
-      style="border:2px dashed var(--border-strong);border-radius:var(--radius);padding:24px;text-align:center;cursor:pointer;transition:all 0.15s;margin-bottom:12px;">
-      <div style="font-size:28px;margin-bottom:6px;">📂</div>
-      <div style="font-size:14px;color:var(--text-muted)">Trascina il file qui oppure <strong>clicca per selezionare</strong></div>
-      <div style="font-size:12px;color:var(--text-faint);margin-top:4px;">.xlsx o .csv</div>
+    <h2>Importa spedizioni</h2>
+    <p class="modal-subtitle">Carica il file da MBE (.xlsx) o altri corrieri (.csv). I duplicati vengono saltati automaticamente.</p>
+
+    <div class="drop-zone" id="drop-zone" onclick="document.getElementById('import-file').click()">
+      <div class="drop-zone-icon">📂</div>
+      <div class="drop-zone-title">Trascina il file qui</div>
+      <div class="drop-zone-sub">oppure <strong>clicca per selezionare</strong> · .xlsx o .csv</div>
     </div>
     <input type="file" id="import-file" accept=".xlsx,.xls,.csv" onchange="handleImportFile(this)" style="display:none;">
-    <div id="import-preview" style="margin-top:4px;min-height:30px;"></div>
+
+    <div id="import-preview" style="min-height:20px;"></div>
+
     <div class="modal-actions">
       <button class="btn-full secondary" onclick="closeImportModal()">Annulla</button>
       <button class="btn-full primary" id="import-confirm-btn" onclick="confirmImport()" style="display:none">Importa</button>
