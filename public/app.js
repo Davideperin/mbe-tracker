@@ -551,21 +551,47 @@ async function handleImportFile(input) {
     else if (ext === "csv") rows = await parseCSV(file);
     else { preview.innerHTML = "<span style='color:var(--red)'>Formato non supportato</span>"; return; }
 
-    const mapped = rows.map(r => ({
-      masterTracking: r["Tracking MBE"] || r["tracking_mbe"] || r["ID"] || "",
-      courierTracking: r["Tracking"] || r["tracking"] || r["Tracking Number"] || "",
-      sender: r["Mittente"] || r["mittente"] || r["Sender"] || "",
-      recipient: r["Destinatario"] || r["destinatario"] || r["Recipient"] || "",
-      city: (r["Città  Destinatario"] || r["Città Destinatario"] || r["City"] || "").trim(),
-      country: r["Stato Destinatario"] || r["Country"] || "",
-      date: r["Data Spedizione"] || r["Data Creazione"] || r["Date"] || "",
-      service: r["Servizio MBE"] || r["Service"] || "",
-      state: r["Stato Spedizione Corriere"] || r["Status"] || "",
-      description: r["Descrizione Merce"] || r["Description"] || "",
-      reference: r["Riferimento"] || r["Reference"] || "",
-      courier: r["Corriere"] || r["courier"] || "",
-      source: ext === "xlsx" ? "MBE" : "Import",
-    })).filter(r => r.masterTracking || r.courierTracking);
+    const mapped = rows.map(r => {
+      // Detect source by columns present
+      const isPirateShip = r["Tracking Number"] !== undefined && r["Ship From"] !== undefined;
+      const isMBE = r["Tracking MBE"] !== undefined;
+
+      if (isPirateShip) {
+        const trk = r["Tracking Number"] || "";
+        return {
+          masterTracking: "PS-" + trk, // Use tracking as unique ID for PirateShip
+          courierTracking: trk,
+          sender: r["Ship From"] || "",
+          recipient: r["Recipient"] || "",
+          city: "",
+          country: "US",
+          date: r["Created Date"] || "",
+          service: r["Saved Package"] || "",
+          state: r["Tracking Status"] || "",
+          description: r["Batch"] || "",
+          reference: "",
+          courier: "", // auto-detect from tracking
+          source: "PirateShip",
+        };
+      }
+
+      // Default: MBE format
+      return {
+        masterTracking: r["Tracking MBE"] || r["tracking_mbe"] || r["ID"] || "",
+        courierTracking: r["Tracking"] || r["tracking"] || r["Tracking Number"] || "",
+        sender: r["Mittente"] || r["mittente"] || r["Sender"] || r["Ship From"] || "",
+        recipient: r["Destinatario"] || r["destinatario"] || r["Recipient"] || "",
+        city: (r["Città  Destinatario"] || r["Città Destinatario"] || r["City"] || "").trim(),
+        country: r["Stato Destinatario"] || r["Country"] || "",
+        date: r["Data Spedizione"] || r["Data Creazione"] || r["Date"] || r["Created Date"] || "",
+        service: r["Servizio MBE"] || r["Service"] || "",
+        state: r["Stato Spedizione Corriere"] || r["Status"] || r["Tracking Status"] || "",
+        description: r["Descrizione Merce"] || r["Description"] || "",
+        reference: r["Riferimento"] || r["Reference"] || "",
+        courier: r["Corriere"] || r["courier"] || "",
+        source: ext === "xlsx" ? "MBE" : "Import",
+      };
+    }).filter(r => r.masterTracking || r.courierTracking);
 
     const seen = new Set();
     const deduped = mapped.filter(r => {
