@@ -137,6 +137,9 @@ function renderList() {
     );
   }
 
+  // Sort by date descending (newest first)
+  list = [...list].sort((a, b) => parseDateForSort(b.date) - parseDateForSort(a.date));
+
   if (list.length === 0) {
     container.innerHTML = `<div class="empty-state">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -595,7 +598,45 @@ function formatDate(d) {
       return date.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
     }
   } catch {}
-  return d; // return as-is if can't parse
+  return d;
+}
+
+function parseDateForSort(d) {
+  if (!d) return 0;
+  if (typeof d === "string" && d.includes("/")) {
+    const parts = d.split("/");
+    if (parts.length === 3) {
+      const [day, month, year] = parts;
+      const t = new Date(`${year}-${month.padStart(2,"0")}-${day.padStart(2,"0")}`).getTime();
+      return isNaN(t) ? 0 : t;
+    }
+  }
+  const t = new Date(d).getTime();
+  return isNaN(t) ? 0 : t;
+}
+
+function cleanupOldDelivered() {
+  const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() - ONE_MONTH_MS;
+  const before = state.shipments.length;
+
+  state.shipments = state.shipments.filter(s => {
+    if (s.status !== "delivered") return true;
+    const date = parseDateForSort(s.date);
+    if (!date) return true; // keep if no valid date
+    return date > cutoff;
+  });
+
+  const removed = before - state.shipments.length;
+  if (removed > 0) {
+    // Cleanup notes for removed shipments
+    const remainingIds = new Set(state.shipments.map(s => s.masterTracking));
+    Object.keys(state.notes).forEach(k => {
+      if (!remainingIds.has(k)) delete state.notes[k];
+    });
+    saveLocal();
+    setTimeout(() => showToast(`🧹 ${removed} ${removed === 1 ? "spedizione consegnata" : "spedizioni consegnate"} da oltre 1 mese ${removed === 1 ? "rimossa" : "rimosse"}`), 800);
+  }
 }
 
 function escapeHtml(s) {
@@ -605,6 +646,7 @@ function escapeHtml(s) {
 // ── INIT ──────────────────────────────────────────────────
 function init() {
   loadLocal();
+  cleanupOldDelivered();
   render();
 
   // Register service worker
