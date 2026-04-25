@@ -329,7 +329,165 @@ function saveManualShipment() {
   document.getElementById("add-note").value = "";
 }
 
-// ── UTILS ─────────────────────────────────────────────────
+// ── IMPORT ───────────────────────────────────────────────
+
+function openImportModal() {
+  document.getElementById("import-modal").classList.add("open");
+}
+
+function closeImportModal() {
+  document.getElementById("import-modal").classList.remove("open");
+  document.getElementById("import-file").value = "";
+  document.getElementById("import-preview").innerHTML = "";
+  document.getElementById("import-confirm-btn").style.display = "none";
+  importPending = [];
+}
+
+let importPending = [];
+
+async function handleImportFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+
+  const preview = document.getElementById("import-preview");
+  preview.innerHTML = "<span style='color:var(--text-faint)'>Lettura file...</span>";
+
+  try {
+    let rows = [];
+    const ext = file.name.split(".").pop().toLowerCase();
+
+    if (ext === "xlsx" || ext === "xls") {
+      rows = await parseXLSX(file);
+    } else if (ext === "csv") {
+      rows = await parseCSV(file);
+    } else {
+      preview.innerHTML = "<span style='color:var(--red)'>Formato non supportato. Usa .xlsx o .csv</span>";
+      return;
+    }
+
+    // Map MBE columns to shipment objects
+    const mapped = rows.map(r => ({
+      masterTracking: r["Tracking MBE"] || r["tracking_mbe"] || r["ID"] || "",
+      courierTracking: r["Tracking"] || r["tracking"] || r["Tracking Number"] || "",
+      sender: r["Mittente"] || r["mittente"] || r["Sender"] || "",
+      recipient: r["Destinatario"] || r["destinatario"] || r["Recipient"] || "",
+      city: (r["Città  Destinatario"] || r["Città Destinatario"] || r["City"] || "").trim(),
+      country: r["Stato Destinatario"] || r["Country"] || "",
+      date: r["Data Spedizione"] || r["Data Creazione"] || r["Date"] || "",
+      service: r["Servizio MBE"] || r["Service"] || "",
+      state: r["Stato Spedizione Corriere"] || r["Status"] || "",
+      description: r["Descrizione Merce"] || r["Description"] || "",
+      reference: r["Riferimento"] || r["Reference"] || "",
+      courier: r["Corriere"] || "UPS",
+      source: ext === "xlsx" ? "MBE" : "Import",
+    })).filter(r => r.masterTracking || r.courierTracking);
+
+    // Deduplicate within file by masterTracking
+    const seen = new Set();
+    const deduped = mapped.filter(r => {
+      const key = r.masterTracking || r.courierTracking;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    // Check duplicates against existing
+    const existing = state.shipments;
+    const newOnes = deduped.filter(r => {
+      const key = r.masterTracking || r.courierTracking;
+      return !existing.find(s =>
+        s.masterTracking === r.masterTracking ||
+        (r.courierTracking && s.courierTracking === r.courierTracking)
+      );
+    });
+    const duplicates = deduped.length - newOnes.length;
+
+    importPending = newOnes.map(enrichShipment);
+
+    // Show preview
+    if (newOnes.length === 0) {
+      preview.innerHTML = `<span style='color:var(--amber)'>⚠️ Tutte le ${deduped.length} spedizioni sono già presenti nell'app.</span>`;
+      document.getElementById("import-confirm-btn").style.display = "none";
+    } else {
+      preview.innerHTML = `
+        <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">
+          <strong style="color:var(--text)">${newOnes.length} nuove</strong> spedizioni da importare
+          ${duplicates > 0 ? `· <span style="color:var(--amber)">${duplicates} già presenti (saltate)</span>` : ""}
+        </div>
+        <div style="max-height:180px;overflow-y:auto;font-size:12px;">
+          ${newOnes.slice(0, 10).map(s => `
+            <div style="padding:5px 0;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;">
+              <span style="color:var(--text-faint);font-family:monospace;min-width:80px;">${(s.masterTracking||"").slice(-8)}</span>
+              <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${s.sender || "—"} → ${s.recipient || "—"}</span>
+              <span style="color:var(--text-faint)">${s.date || ""}</span>
+            </div>`).join("")}
+          ${newOnes.length > 10 ? `<div style="padding:5px 0;color:var(--text-faint)">... e altre ${newOnes.length - 10}</div>` : ""}
+        </div>`;
+      document.getElementById("import-confirm-btn").style.display = "block";
+    }
+
+  } catch (e) {
+    preview.innerHTML = `<span style='color:var(--red)'>Errore nella lettura: ${e.message}</span>`;
+  }
+}
+
+async function confirmImport() {
+  if (!importPending.length) return;
+  // Add notes from description field if present
+  importPending.forEach(s => {
+    if (s.description && !state.notes[s.masterTracking]) {
+      state.notes[s.masterTracking] = s.description;
+    }
+  });
+  state.shipments = [...importPending, ...state.shipments];
+  state.lastSync = new Date().toLocaleString("it-IT");
+  saveLocal();
+  closeImportModal();
+  render();
+  showToast(`✓ ${importPending.length} spedizioni importate`);
+  importPending = [];
+}
+
+// Parse XLSX using SheetJS (loaded from CDN in HTML)
+function parseXLSX(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: "array" });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+        resolve(rows);
+      } catch (err) { reject(err); }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+// Parse CSV
+function parseCSV(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const text = e.target.result;
+        const lines = text.split(/\r?\n/).filter(Boolean);
+        const headers = lines[0].split(/[,;|\t]/).map(h => h.trim().replace(/^"|"$/g, ""));
+        const rows = lines.slice(1).map(line => {
+          const vals = line.split(/[,;|\t]/).map(v => v.trim().replace(/^"|"$/g, ""));
+          const obj = {};
+          headers.forEach((h, i) => obj[h] = vals[i] || "");
+          return obj;
+        });
+        resolve(rows);
+      } catch (err) { reject(err); }
+    };
+    reader.onerror = reject;
+    reader.readAsText(file, "UTF-8");
+  });
+}
 function setLoading(val) {
   state.loading = val;
   const bar = document.getElementById("loading-bar");
