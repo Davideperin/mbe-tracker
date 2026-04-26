@@ -170,14 +170,13 @@ function renderStats() {
   const active = state.shipments.filter(s => !s.archived);
   let totalEur = 0, totalUsd = 0;
   state.shipments.forEach(s => {
-    const sum = (parseFloat(s.cost) || 0) + (parseFloat(s.customsDuty) || 0) + (parseFloat(s.brokerage) || 0);
-    if (s.currency === "USD") totalUsd += sum;
-    else totalEur += sum;
+    const t = computeShipmentTotals(s);
+    totalEur += t.eur;
+    totalUsd += t.usd;
   });
   document.getElementById("stat-all").textContent = active.length;
   document.getElementById("stat-transit").textContent = active.filter(s => s.status === "transit").length;
   document.getElementById("stat-delivered").textContent = active.filter(s => s.status === "delivered").length;
-  // Show whichever currency has data, prefer EUR
   let costStr = "—";
   if (totalEur > 0 && totalUsd > 0) costStr = `€${totalEur.toFixed(0)} · $${totalUsd.toFixed(0)}`;
   else if (totalEur > 0) costStr = `€${totalEur.toFixed(0)}`;
@@ -304,20 +303,39 @@ function renderCard(s) {
 function renderBillingSummary(s) {
   const hasCost = s.cost || s.customsDuty || s.brokerage || s.mrn || s.attachmentUrl;
   if (!hasCost) return "";
-  const sym = currencySymbol(s.currency);
   const parts = [];
-  if (s.cost) parts.push(`<span class="bill-item">Spedizione: <strong>${sym}${parseFloat(s.cost).toFixed(2)}</strong></span>`);
-  if (s.customsDuty) parts.push(`<span class="bill-item">Dazi: <strong>${sym}${parseFloat(s.customsDuty).toFixed(2)}</strong></span>`);
-  if (s.brokerage) parts.push(`<span class="bill-item">Sdoganamento: <strong>${sym}${parseFloat(s.brokerage).toFixed(2)}</strong></span>`);
-  // Total
-  const total = (parseFloat(s.cost) || 0) + (parseFloat(s.customsDuty) || 0) + (parseFloat(s.brokerage) || 0);
-  if (total > 0 && (s.cost ? 1 : 0) + (s.customsDuty ? 1 : 0) + (s.brokerage ? 1 : 0) > 1) {
-    parts.push(`<span class="bill-item bill-total">Totale: <strong>${sym}${total.toFixed(2)}</strong></span>`);
+  if (s.cost) parts.push(`<span class="bill-item">Spedizione: <strong>${currencySymbol(s.costCurrency)}${parseFloat(s.cost).toFixed(2)}</strong></span>`);
+  if (s.customsDuty) parts.push(`<span class="bill-item">Dazi: <strong>${currencySymbol(s.customsDutyCurrency)}${parseFloat(s.customsDuty).toFixed(2)}</strong></span>`);
+  if (s.brokerage) parts.push(`<span class="bill-item">Sdoganamento: <strong>${currencySymbol(s.brokerageCurrency)}${parseFloat(s.brokerage).toFixed(2)}</strong></span>`);
+  // Total per currency
+  const totals = computeShipmentTotals(s);
+  const totalParts = [];
+  if (totals.eur > 0) totalParts.push(`€${totals.eur.toFixed(2)}`);
+  if (totals.usd > 0) totalParts.push(`$${totals.usd.toFixed(2)}`);
+  if (totalParts.length > 0 && (s.cost ? 1 : 0) + (s.customsDuty ? 1 : 0) + (s.brokerage ? 1 : 0) > 1) {
+    parts.push(`<span class="bill-item bill-total">Totale: <strong>${totalParts.join(" + ")}</strong></span>`);
   }
   if (s.mrn) parts.push(`<span class="bill-item">MRN: <code>${s.mrn}</code></span>`);
   if (s.entryNo) parts.push(`<span class="bill-item">Entry: <code>${s.entryNo}</code></span>`);
   if (s.attachmentUrl) parts.push(`<a href="${s.attachmentUrl}" target="_blank" class="bill-attachment">📎 ${s.attachmentName || "Allegato"}</a>`);
   return `<div class="card-billing">${parts.join("")}</div>`;
+}
+
+function computeShipmentTotals(s) {
+  let eur = 0, usd = 0;
+  const items = [
+    { val: s.cost, cur: s.costCurrency },
+    { val: s.customsDuty, cur: s.customsDutyCurrency },
+    { val: s.brokerage, cur: s.brokerageCurrency },
+  ];
+  items.forEach(({ val, cur }) => {
+    const v = parseFloat(val) || 0;
+    if (v > 0) {
+      if (cur === "USD") usd += v;
+      else eur += v;
+    }
+  });
+  return { eur, usd };
 }
 
 function currencySymbol(c) {
@@ -510,9 +528,11 @@ function openBillingModal(masterTracking) {
 
   document.getElementById("billing-modal-title").textContent = s.recipient || masterTracking;
   document.getElementById("billing-cost").value = s.cost || "";
+  document.getElementById("billing-cost-currency").value = s.costCurrency || "EUR";
   document.getElementById("billing-customs").value = s.customsDuty || "";
+  document.getElementById("billing-customs-currency").value = s.customsDutyCurrency || "EUR";
   document.getElementById("billing-brokerage").value = s.brokerage || "";
-  document.getElementById("billing-currency").value = s.currency || "EUR";
+  document.getElementById("billing-brokerage-currency").value = s.brokerageCurrency || "EUR";
   document.getElementById("billing-mrn").value = s.mrn || "";
   document.getElementById("billing-entry").value = s.entryNo || "";
   document.getElementById("billing-notes").value = s.notesBilling || "";
@@ -541,9 +561,11 @@ async function saveBilling() {
   if (!currentBillingTracking) return;
   const billing = {
     cost: parseFloat(document.getElementById("billing-cost").value) || null,
+    costCurrency: document.getElementById("billing-cost-currency").value || "EUR",
     customsDuty: parseFloat(document.getElementById("billing-customs").value) || null,
+    customsDutyCurrency: document.getElementById("billing-customs-currency").value || "EUR",
     brokerage: parseFloat(document.getElementById("billing-brokerage").value) || null,
-    currency: document.getElementById("billing-currency").value || "EUR",
+    brokerageCurrency: document.getElementById("billing-brokerage-currency").value || "EUR",
     mrn: document.getElementById("billing-mrn").value.trim() || null,
     entryNo: document.getElementById("billing-entry").value.trim() || null,
     notesBilling: document.getElementById("billing-notes").value.trim() || null,
@@ -717,6 +739,9 @@ async function handleImportFile(input) {
           reference: "",
           courier: "",
           cost: parseFloat(r["Cost"]) || null,
+          costCurrency: "USD",
+          customsDutyCurrency: "USD",
+          brokerageCurrency: "USD",
           currency: "USD",
           source: "PirateShip",
         };
@@ -737,6 +762,9 @@ async function handleImportFile(input) {
         reference: r["Riferimento"] || r["Reference"] || "",
         courier: r["Corriere"] || r["courier"] || "",
         cost: parseFloat(r["Prezzo Lordo Totale"]) || parseFloat(r["Prezzo Stimato"]) || parseFloat(r["Cost"]) || null,
+        costCurrency: "EUR",
+        customsDutyCurrency: "EUR",
+        brokerageCurrency: "EUR",
         currency: "EUR",
         source: ext === "xlsx" ? "MBE" : "Import",
       };
@@ -1004,16 +1032,14 @@ function renderStatsPage() {
   let customsEur = 0, customsUsd = 0;
   list.forEach(s => {
     const cost = parseFloat(s.cost) || 0;
-    const customs = (parseFloat(s.customsDuty) || 0) + (parseFloat(s.brokerage) || 0);
-    if (s.currency === "USD") {
-      costUsd += cost;
-      customsUsd += customs;
-      totalUsd += cost + customs;
-    } else {
-      costEur += cost;
-      customsEur += customs;
-      totalEur += cost + customs;
-    }
+    const cd = parseFloat(s.customsDuty) || 0;
+    const br = parseFloat(s.brokerage) || 0;
+    if (s.costCurrency === "USD") costUsd += cost; else costEur += cost;
+    if (s.customsDutyCurrency === "USD") customsUsd += cd; else customsEur += cd;
+    if (s.brokerageCurrency === "USD") customsUsd += br; else customsEur += br;
+    const t = computeShipmentTotals(s);
+    totalEur += t.eur;
+    totalUsd += t.usd;
   });
 
   // Average delivery time (only delivered with both dates)
@@ -1038,9 +1064,9 @@ function renderStatsPage() {
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     if (!monthly[key]) monthly[key] = { count: 0, eur: 0, usd: 0 };
     monthly[key].count++;
-    const cost = (parseFloat(s.cost) || 0) + (parseFloat(s.customsDuty) || 0) + (parseFloat(s.brokerage) || 0);
-    if (s.currency === "USD") monthly[key].usd += cost;
-    else monthly[key].eur += cost;
+    const tot = computeShipmentTotals(s);
+    monthly[key].eur += tot.eur;
+    monthly[key].usd += tot.usd;
   });
 
   const sortedMonths = Object.keys(monthly).sort();
@@ -1104,9 +1130,9 @@ function renderCourierBreakdown(list) {
     const c = courierLabel(s.courier, s.courierTracking);
     if (!breakdown[c]) breakdown[c] = { count: 0, eur: 0, usd: 0 };
     breakdown[c].count++;
-    const cost = (parseFloat(s.cost) || 0) + (parseFloat(s.customsDuty) || 0) + (parseFloat(s.brokerage) || 0);
-    if (s.currency === "USD") breakdown[c].usd += cost;
-    else breakdown[c].eur += cost;
+    const tot = computeShipmentTotals(s);
+    breakdown[c].eur += tot.eur;
+    breakdown[c].usd += tot.usd;
   });
   const sorted = Object.entries(breakdown).sort((a, b) => b[1].count - a[1].count);
   if (sorted.length === 0) return "";
@@ -1141,7 +1167,8 @@ function renderTopShipments(list) {
       <thead><tr><th>Destinatario</th><th>Mittente</th><th>${statsState.sortBy === "cost" ? "Costo" : "Dazi"}</th></tr></thead>
       <tbody>
         ${sorted.map(s => {
-          const sym = currencySymbol(s.currency);
+          const cur = field === "cost" ? s.costCurrency : s.customsDutyCurrency;
+          const sym = currencySymbol(cur);
           const val = parseFloat(s[field]);
           return `<tr>
             <td><strong>${s.recipient || "—"}</strong></td>
