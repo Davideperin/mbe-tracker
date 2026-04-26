@@ -168,11 +168,21 @@ function render() {
 
 function renderStats() {
   const active = state.shipments.filter(s => !s.archived);
-  const totalCost = state.shipments.reduce((sum, s) => sum + (parseFloat(s.cost) || 0) + (parseFloat(s.customsDuty) || 0) + (parseFloat(s.brokerage) || 0), 0);
+  let totalEur = 0, totalUsd = 0;
+  state.shipments.forEach(s => {
+    const sum = (parseFloat(s.cost) || 0) + (parseFloat(s.customsDuty) || 0) + (parseFloat(s.brokerage) || 0);
+    if (s.currency === "USD") totalUsd += sum;
+    else totalEur += sum;
+  });
   document.getElementById("stat-all").textContent = active.length;
   document.getElementById("stat-transit").textContent = active.filter(s => s.status === "transit").length;
   document.getElementById("stat-delivered").textContent = active.filter(s => s.status === "delivered").length;
-  document.getElementById("stat-cost").textContent = totalCost > 0 ? "€" + totalCost.toFixed(0) : "—";
+  // Show whichever currency has data, prefer EUR
+  let costStr = "—";
+  if (totalEur > 0 && totalUsd > 0) costStr = `€${totalEur.toFixed(0)} · $${totalUsd.toFixed(0)}`;
+  else if (totalEur > 0) costStr = `€${totalEur.toFixed(0)}`;
+  else if (totalUsd > 0) costStr = `$${totalUsd.toFixed(0)}`;
+  document.getElementById("stat-cost").textContent = costStr;
 }
 
 function renderList() {
@@ -294,14 +304,24 @@ function renderCard(s) {
 function renderBillingSummary(s) {
   const hasCost = s.cost || s.customsDuty || s.brokerage || s.mrn || s.attachmentUrl;
   if (!hasCost) return "";
+  const sym = currencySymbol(s.currency);
   const parts = [];
-  if (s.cost) parts.push(`<span class="bill-item">Spedizione: <strong>€${parseFloat(s.cost).toFixed(2)}</strong></span>`);
-  if (s.customsDuty) parts.push(`<span class="bill-item">Dazi: <strong>€${parseFloat(s.customsDuty).toFixed(2)}</strong></span>`);
-  if (s.brokerage) parts.push(`<span class="bill-item">Sdoganamento: <strong>€${parseFloat(s.brokerage).toFixed(2)}</strong></span>`);
+  if (s.cost) parts.push(`<span class="bill-item">Spedizione: <strong>${sym}${parseFloat(s.cost).toFixed(2)}</strong></span>`);
+  if (s.customsDuty) parts.push(`<span class="bill-item">Dazi: <strong>${sym}${parseFloat(s.customsDuty).toFixed(2)}</strong></span>`);
+  if (s.brokerage) parts.push(`<span class="bill-item">Sdoganamento: <strong>${sym}${parseFloat(s.brokerage).toFixed(2)}</strong></span>`);
+  // Total
+  const total = (parseFloat(s.cost) || 0) + (parseFloat(s.customsDuty) || 0) + (parseFloat(s.brokerage) || 0);
+  if (total > 0 && (s.cost ? 1 : 0) + (s.customsDuty ? 1 : 0) + (s.brokerage ? 1 : 0) > 1) {
+    parts.push(`<span class="bill-item bill-total">Totale: <strong>${sym}${total.toFixed(2)}</strong></span>`);
+  }
   if (s.mrn) parts.push(`<span class="bill-item">MRN: <code>${s.mrn}</code></span>`);
   if (s.entryNo) parts.push(`<span class="bill-item">Entry: <code>${s.entryNo}</code></span>`);
   if (s.attachmentUrl) parts.push(`<a href="${s.attachmentUrl}" target="_blank" class="bill-attachment">📎 ${s.attachmentName || "Allegato"}</a>`);
   return `<div class="card-billing">${parts.join("")}</div>`;
+}
+
+function currencySymbol(c) {
+  return c === "USD" ? "$" : "€";
 }
 
 // ── ACTIONS ──────────────────────────────────────────────
@@ -492,6 +512,7 @@ function openBillingModal(masterTracking) {
   document.getElementById("billing-cost").value = s.cost || "";
   document.getElementById("billing-customs").value = s.customsDuty || "";
   document.getElementById("billing-brokerage").value = s.brokerage || "";
+  document.getElementById("billing-currency").value = s.currency || "EUR";
   document.getElementById("billing-mrn").value = s.mrn || "";
   document.getElementById("billing-entry").value = s.entryNo || "";
   document.getElementById("billing-notes").value = s.notesBilling || "";
@@ -522,6 +543,7 @@ async function saveBilling() {
     cost: parseFloat(document.getElementById("billing-cost").value) || null,
     customsDuty: parseFloat(document.getElementById("billing-customs").value) || null,
     brokerage: parseFloat(document.getElementById("billing-brokerage").value) || null,
+    currency: document.getElementById("billing-currency").value || "EUR",
     mrn: document.getElementById("billing-mrn").value.trim() || null,
     entryNo: document.getElementById("billing-entry").value.trim() || null,
     notesBilling: document.getElementById("billing-notes").value.trim() || null,
@@ -695,6 +717,7 @@ async function handleImportFile(input) {
           reference: "",
           courier: "",
           cost: parseFloat(r["Cost"]) || null,
+          currency: "USD",
           source: "PirateShip",
         };
       }
@@ -714,6 +737,7 @@ async function handleImportFile(input) {
         reference: r["Riferimento"] || r["Reference"] || "",
         courier: r["Corriere"] || r["courier"] || "",
         cost: parseFloat(r["Prezzo Lordo Totale"]) || parseFloat(r["Prezzo Stimato"]) || parseFloat(r["Cost"]) || null,
+        currency: "EUR",
         source: ext === "xlsx" ? "MBE" : "Import",
       };
     }).filter(r => r.masterTracking || r.courierTracking);
@@ -899,6 +923,297 @@ function parseDateForSort(d) {
 
 function escapeHtml(s) {
   return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+
+// ── STATISTICS ───────────────────────────────────────────
+const statsState = {
+  dateFrom: null,
+  dateTo: null,
+  filterSender: "",
+  filterRecipient: "",
+  filterCourier: "",
+  sortBy: "date",  // date | cost | duty
+};
+
+function openStats() {
+  // Default range: last 6 months
+  if (!statsState.dateFrom) {
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    statsState.dateFrom = sixMonthsAgo.toISOString().slice(0, 10);
+    statsState.dateTo = new Date().toISOString().slice(0, 10);
+  }
+  document.getElementById("stats-screen").style.display = "block";
+  document.getElementById("app-screen").style.display = "none";
+  renderStatsPage();
+}
+
+function closeStats() {
+  document.getElementById("stats-screen").style.display = "none";
+  document.getElementById("app-screen").style.display = "block";
+}
+
+function getFilteredForStats() {
+  let list = state.shipments;
+  // Date filter
+  const fromMs = statsState.dateFrom ? new Date(statsState.dateFrom).getTime() : 0;
+  const toMs = statsState.dateTo ? new Date(statsState.dateTo).getTime() + 86400000 : Infinity;
+  list = list.filter(s => {
+    const t = parseDateForSort(s.date);
+    return t >= fromMs && t <= toMs;
+  });
+  // Sender/recipient filter
+  if (statsState.filterSender) {
+    const q = statsState.filterSender.toLowerCase();
+    list = list.filter(s => (s.sender || "").toLowerCase().includes(q));
+  }
+  if (statsState.filterRecipient) {
+    const q = statsState.filterRecipient.toLowerCase();
+    list = list.filter(s => (s.recipient || "").toLowerCase().includes(q));
+  }
+  if (statsState.filterCourier) {
+    list = list.filter(s => courierLabel(s.courier, s.courierTracking) === statsState.filterCourier);
+  }
+  return list;
+}
+
+function renderStatsPage() {
+  const list = getFilteredForStats();
+
+  // Update inputs
+  document.getElementById("stats-date-from").value = statsState.dateFrom || "";
+  document.getElementById("stats-date-to").value = statsState.dateTo || "";
+
+  // Build courier options from all shipments (not filtered)
+  const couriers = new Set();
+  state.shipments.forEach(s => {
+    const c = courierLabel(s.courier, s.courierTracking);
+    if (c && c !== "—") couriers.add(c);
+  });
+  const courierSelect = document.getElementById("stats-courier");
+  if (courierSelect) {
+    const current = statsState.filterCourier;
+    courierSelect.innerHTML = `<option value="">Tutti i corrieri</option>` +
+      [...couriers].sort().map(c => `<option value="${c}" ${current === c ? "selected" : ""}>${c}</option>`).join("");
+  }
+
+  // Totals by currency
+  let totalEur = 0, totalUsd = 0;
+  let costEur = 0, costUsd = 0;
+  let customsEur = 0, customsUsd = 0;
+  list.forEach(s => {
+    const cost = parseFloat(s.cost) || 0;
+    const customs = (parseFloat(s.customsDuty) || 0) + (parseFloat(s.brokerage) || 0);
+    if (s.currency === "USD") {
+      costUsd += cost;
+      customsUsd += customs;
+      totalUsd += cost + customs;
+    } else {
+      costEur += cost;
+      customsEur += customs;
+      totalEur += cost + customs;
+    }
+  });
+
+  // Average delivery time (only delivered with both dates)
+  const deliveredWithDates = list.filter(s => s.status === "delivered" && s.deliveryDate && s.date);
+  let avgDays = 0;
+  if (deliveredWithDates.length > 0) {
+    const totalDays = deliveredWithDates.reduce((sum, s) => {
+      const start = parseDateForSort(s.date);
+      const end = parseDateForSort(s.deliveryDate);
+      if (start && end && end > start) return sum + Math.round((end - start) / 86400000);
+      return sum;
+    }, 0);
+    avgDays = Math.round(totalDays / deliveredWithDates.length);
+  }
+
+  // Monthly chart data
+  const monthly = {};
+  list.forEach(s => {
+    const t = parseDateForSort(s.date);
+    if (!t) return;
+    const d = new Date(t);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    if (!monthly[key]) monthly[key] = { count: 0, eur: 0, usd: 0 };
+    monthly[key].count++;
+    const cost = (parseFloat(s.cost) || 0) + (parseFloat(s.customsDuty) || 0) + (parseFloat(s.brokerage) || 0);
+    if (s.currency === "USD") monthly[key].usd += cost;
+    else monthly[key].eur += cost;
+  });
+
+  const sortedMonths = Object.keys(monthly).sort();
+
+  // Render
+  const html = `
+    <div class="stats-section">
+      <h3>Riepilogo periodo</h3>
+      <div class="stats-cards">
+        <div class="stat-big">
+          <div class="stat-big-num">${list.length}</div>
+          <div class="stat-big-lbl">Spedizioni</div>
+        </div>
+        <div class="stat-big">
+          <div class="stat-big-num">${avgDays || "—"}${avgDays ? "<small> gg</small>" : ""}</div>
+          <div class="stat-big-lbl">Tempo medio consegna</div>
+        </div>
+        <div class="stat-big">
+          <div class="stat-big-num">${totalEur > 0 ? "€" + totalEur.toFixed(0) : "—"}</div>
+          <div class="stat-big-lbl">Totale EUR</div>
+        </div>
+        <div class="stat-big">
+          <div class="stat-big-num">${totalUsd > 0 ? "$" + totalUsd.toFixed(0) : "—"}</div>
+          <div class="stat-big-lbl">Totale USD</div>
+        </div>
+      </div>
+    </div>
+
+    ${(totalEur > 0 || totalUsd > 0) ? `
+    <div class="stats-section">
+      <h3>Dettaglio costi</h3>
+      <table class="stats-table">
+        <thead><tr><th></th><th>EUR</th><th>USD</th></tr></thead>
+        <tbody>
+          <tr><td>Spedizione</td><td>${costEur > 0 ? "€" + costEur.toFixed(2) : "—"}</td><td>${costUsd > 0 ? "$" + costUsd.toFixed(2) : "—"}</td></tr>
+          <tr><td>Dazi + Sdoganamento</td><td>${customsEur > 0 ? "€" + customsEur.toFixed(2) : "—"}</td><td>${customsUsd > 0 ? "$" + customsUsd.toFixed(2) : "—"}</td></tr>
+          <tr class="total-row"><td>Totale</td><td><strong>${totalEur > 0 ? "€" + totalEur.toFixed(2) : "—"}</strong></td><td><strong>${totalUsd > 0 ? "$" + totalUsd.toFixed(2) : "—"}</strong></td></tr>
+        </tbody>
+      </table>
+    </div>` : ""}
+
+    ${sortedMonths.length > 0 ? `
+    <div class="stats-section">
+      <h3>Spedizioni per mese</h3>
+      <div class="monthly-chart">
+        ${renderMonthlyChart(sortedMonths, monthly)}
+      </div>
+    </div>` : ""}
+
+    ${renderCourierBreakdown(list)}
+
+    ${renderTopShipments(list)}
+  `;
+
+  document.getElementById("stats-content").innerHTML = html;
+}
+
+function renderCourierBreakdown(list) {
+  const breakdown = {};
+  list.forEach(s => {
+    const c = courierLabel(s.courier, s.courierTracking);
+    if (!breakdown[c]) breakdown[c] = { count: 0, eur: 0, usd: 0 };
+    breakdown[c].count++;
+    const cost = (parseFloat(s.cost) || 0) + (parseFloat(s.customsDuty) || 0) + (parseFloat(s.brokerage) || 0);
+    if (s.currency === "USD") breakdown[c].usd += cost;
+    else breakdown[c].eur += cost;
+  });
+  const sorted = Object.entries(breakdown).sort((a, b) => b[1].count - a[1].count);
+  if (sorted.length === 0) return "";
+  return `<div class="stats-section">
+    <h3>Per corriere</h3>
+    <table class="stats-table">
+      <thead><tr><th>Corriere</th><th>Spedizioni</th><th>Costi</th></tr></thead>
+      <tbody>
+        ${sorted.map(([c, d]) => {
+          const costs = [];
+          if (d.eur > 0) costs.push(`€${d.eur.toFixed(0)}`);
+          if (d.usd > 0) costs.push(`$${d.usd.toFixed(0)}`);
+          return `<tr><td>${c}</td><td>${d.count}</td><td>${costs.join(" + ") || "—"}</td></tr>`;
+        }).join("")}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+function renderTopShipments(list) {
+  if (statsState.sortBy === "date") return ""; // skip if not sorted by cost/duty
+  const field = statsState.sortBy === "cost" ? "cost" : "customsDuty";
+  const title = statsState.sortBy === "cost" ? "Top spedizioni per costo" : "Top spedizioni per dazi";
+  const sorted = [...list]
+    .filter(s => parseFloat(s[field]) > 0)
+    .sort((a, b) => (parseFloat(b[field]) || 0) - (parseFloat(a[field]) || 0))
+    .slice(0, 10);
+  if (sorted.length === 0) return "";
+  return `<div class="stats-section">
+    <h3>${title}</h3>
+    <table class="stats-table">
+      <thead><tr><th>Destinatario</th><th>Mittente</th><th>${statsState.sortBy === "cost" ? "Costo" : "Dazi"}</th></tr></thead>
+      <tbody>
+        ${sorted.map(s => {
+          const sym = currencySymbol(s.currency);
+          const val = parseFloat(s[field]);
+          return `<tr>
+            <td><strong>${s.recipient || "—"}</strong></td>
+            <td>${s.sender || "—"}</td>
+            <td>${sym}${val.toFixed(2)}</td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+function renderMonthlyChart(months, data) {
+  const maxCount = Math.max(...months.map(m => data[m].count), 1);
+  return months.map(m => {
+    const d = data[m];
+    const heightPct = (d.count / maxCount) * 100;
+    const [year, month] = m.split("-");
+    const monthNames = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"];
+    const label = monthNames[parseInt(month) - 1] + " " + year.slice(2);
+    const costParts = [];
+    if (d.eur > 0) costParts.push(`€${d.eur.toFixed(0)}`);
+    if (d.usd > 0) costParts.push(`$${d.usd.toFixed(0)}`);
+    return `<div class="month-bar">
+      <div class="month-bar-value">${d.count}</div>
+      <div class="month-bar-fill" style="height:${heightPct}%"></div>
+      <div class="month-bar-label">${label}</div>
+      <div class="month-bar-cost">${costParts.join(" + ") || "—"}</div>
+    </div>`;
+  }).join("");
+}
+
+function updateStatsDateFrom(v) {
+  statsState.dateFrom = v;
+  renderStatsPage();
+}
+
+function updateStatsDateTo(v) {
+  statsState.dateTo = v;
+  renderStatsPage();
+}
+
+function updateStatsSender(v) {
+  statsState.filterSender = v;
+  renderStatsPage();
+}
+
+function updateStatsRecipient(v) {
+  statsState.filterRecipient = v;
+  renderStatsPage();
+}
+
+function updateStatsCourier(v) {
+  statsState.filterCourier = v;
+  renderStatsPage();
+}
+
+function setStatsSort(by) {
+  statsState.sortBy = by;
+  document.querySelectorAll(".sort-btn").forEach(b => {
+    b.classList.toggle("active", b.dataset.sort === by);
+  });
+  renderStatsPage();
+}
+
+function setStatsRange(months) {
+  const to = new Date();
+  const from = new Date();
+  from.setMonth(from.getMonth() - months);
+  statsState.dateFrom = from.toISOString().slice(0, 10);
+  statsState.dateTo = to.toISOString().slice(0, 10);
+  renderStatsPage();
 }
 
 // ── INIT ──────────────────────────────────────────────────
