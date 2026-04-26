@@ -520,20 +520,33 @@ function openBillingModal(masterTracking) {
   const s = state.shipments.find(x => x.masterTracking === masterTracking);
   if (!s) return;
 
-  document.getElementById("billing-modal-title").textContent = s.recipient || masterTracking;
-  document.getElementById("billing-cost").value = s.cost || "";
-  document.getElementById("billing-cost-currency").value = s.costCurrency || "EUR";
-  document.getElementById("billing-customs").value = s.customsDuty || "";
-  document.getElementById("billing-customs-currency").value = s.customsDutyCurrency || "EUR";
-  document.getElementById("billing-brokerage").value = s.brokerage || "";
-  document.getElementById("billing-brokerage-currency").value = s.brokerageCurrency || "EUR";
-  document.getElementById("billing-mrn").value = s.mrn || "";
-  document.getElementById("billing-entry").value = s.entryNo || "";
-  document.getElementById("billing-notes").value = s.notesBilling || "";
+  setVal("billing-modal-title", s.recipient || masterTracking, "text");
+  setVal("billing-cost", s.cost || "");
+  setVal("billing-cost-currency", s.costCurrency || "EUR");
+  setVal("billing-customs", s.customsDuty || "");
+  setVal("billing-customs-currency", s.customsDutyCurrency || "EUR");
+  setVal("billing-brokerage", s.brokerage || "");
+  setVal("billing-brokerage-currency", s.brokerageCurrency || "EUR");
+  setVal("billing-mrn", s.mrn || "");
+  setVal("billing-entry", s.entryNo || "");
+  setVal("billing-notes", s.notesBilling || "");
 
-  // Show existing attachments if any
   renderAttachmentsList(s);
   document.getElementById("billing-modal").classList.add("open");
+}
+
+// Safe setter: skips elements that don't exist
+function setVal(id, val, type) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (type === "text") el.textContent = val;
+  else el.value = val;
+}
+
+// Safe getter
+function getVal(id, defaultVal) {
+  const el = document.getElementById(id);
+  return el ? el.value : (defaultVal !== undefined ? defaultVal : "");
 }
 
 function renderAttachmentsList(s) {
@@ -578,15 +591,15 @@ function closeBillingModal() {
 async function saveBilling() {
   if (!currentBillingTracking) return;
   const billing = {
-    cost: parseFloat(document.getElementById("billing-cost").value) || null,
-    costCurrency: document.getElementById("billing-cost-currency").value || "EUR",
-    customsDuty: parseFloat(document.getElementById("billing-customs").value) || null,
-    customsDutyCurrency: document.getElementById("billing-customs-currency").value || "EUR",
-    brokerage: parseFloat(document.getElementById("billing-brokerage").value) || null,
-    brokerageCurrency: document.getElementById("billing-brokerage-currency").value || "EUR",
-    mrn: document.getElementById("billing-mrn").value.trim() || null,
-    entryNo: document.getElementById("billing-entry").value.trim() || null,
-    notesBilling: document.getElementById("billing-notes").value.trim() || null,
+    cost: parseFloat(getVal("billing-cost")) || null,
+    costCurrency: getVal("billing-cost-currency", "EUR"),
+    customsDuty: parseFloat(getVal("billing-customs")) || null,
+    customsDutyCurrency: getVal("billing-customs-currency", "EUR"),
+    brokerage: parseFloat(getVal("billing-brokerage")) || null,
+    brokerageCurrency: getVal("billing-brokerage-currency", "EUR"),
+    mrn: getVal("billing-mrn").trim() || null,
+    entryNo: getVal("billing-entry").trim() || null,
+    notesBilling: getVal("billing-notes").trim() || null,
   };
 
   const btn = document.getElementById("billing-save-btn");
@@ -622,24 +635,6 @@ async function saveBilling() {
   } finally {
     btn.disabled = false;
     btn.textContent = "Salva";
-  }
-}
-
-async function removeAttachment() {
-  if (!currentBillingTracking) return;
-  if (!confirm("Rimuovere l\'allegato?")) return;
-  const s = state.shipments.find(x => x.masterTracking === currentBillingTracking);
-  if (s && s.attachmentUrl) {
-    try {
-      await deleteAttachment(currentBillingTracking, s.attachmentUrl);
-      s.attachmentUrl = null;
-      s.attachmentName = null;
-      document.getElementById("billing-attachment-info").innerHTML = "";
-      render();
-      showToast("Allegato rimosso");
-    } catch (e) {
-      showToast("Errore: " + e.message);
-    }
   }
 }
 
@@ -940,31 +935,41 @@ function showToast(msg) {
 
 function formatDate(d) {
   if (!d) return "—";
-  if (typeof d === "string" && d.includes("/")) {
-    const parts = d.split("/");
-    if (parts.length === 3) {
-      const [day, month, year] = parts;
-      const date = new Date(`${year}-${month.padStart(2,"0")}-${day.padStart(2,"0")}`);
-      if (!isNaN(date)) return date.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
-    }
-  }
-  try {
-    const date = new Date(d);
-    if (!isNaN(date)) return date.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
-  } catch {}
-  return d;
+  const ts = parseDateForSort(d);
+  if (ts === 0) return d;
+  return new Date(ts).toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
 }
 
 function parseDateForSort(d) {
   if (!d) return 0;
-  if (typeof d === "string" && d.includes("/")) {
-    const parts = d.split("/");
+  if (typeof d !== "string") {
+    const t = new Date(d).getTime();
+    return isNaN(t) ? 0 : t;
+  }
+
+  // PirateShip format: "Tuesday, 4/21/26 4:22 PM PDT"
+  const psMatch = d.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (psMatch && d.includes(",")) {
+    const [_, m, day, y] = psMatch;
+    let year = parseInt(y);
+    if (year < 100) year += 2000;
+    const t = new Date(year, parseInt(m) - 1, parseInt(day)).getTime();
+    if (!isNaN(t)) return t;
+  }
+
+  // Italian format: DD/MM/YYYY
+  if (d.includes("/")) {
+    const parts = d.split(" ")[0].split("/"); // take only date part if there's time
     if (parts.length === 3) {
       const [day, month, year] = parts;
-      const t = new Date(`${year}-${month.padStart(2,"0")}-${day.padStart(2,"0")}`).getTime();
-      return isNaN(t) ? 0 : t;
+      let y = parseInt(year);
+      if (y < 100) y += 2000;
+      const t = new Date(y, parseInt(month) - 1, parseInt(day)).getTime();
+      if (!isNaN(t)) return t;
     }
   }
+
+  // ISO or any other format
   const t = new Date(d).getTime();
   return isNaN(t) ? 0 : t;
 }
@@ -983,6 +988,7 @@ const statsState = {
   filterCourier: "",
   sortBy: "date",
   compareYoY: false,
+  quickRange: 6,
 };
 
 function openStats() {
@@ -992,9 +998,16 @@ function openStats() {
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
     statsState.dateFrom = sixMonthsAgo.toISOString().slice(0, 10);
     statsState.dateTo = new Date().toISOString().slice(0, 10);
+    statsState.quickRange = 6;
   }
   document.getElementById("stats-screen").style.display = "block";
   document.getElementById("app-screen").style.display = "none";
+  // Set active button
+  setTimeout(() => {
+    document.querySelectorAll(".stats-quick-ranges .filter-chip").forEach(b => {
+      b.classList.toggle("active", parseInt(b.dataset.months) === (statsState.quickRange || 6));
+    });
+  }, 0);
   renderStatsPage();
 }
 
@@ -1318,6 +1331,11 @@ function setStatsRange(months) {
   from.setMonth(from.getMonth() - months);
   statsState.dateFrom = from.toISOString().slice(0, 10);
   statsState.dateTo = to.toISOString().slice(0, 10);
+  statsState.quickRange = months;
+  // Update visual active state
+  document.querySelectorAll(".stats-quick-ranges .filter-chip").forEach(b => {
+    b.classList.toggle("active", parseInt(b.dataset.months) === months);
+  });
   renderStatsPage();
 }
 
