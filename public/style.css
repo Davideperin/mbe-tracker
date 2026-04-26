@@ -723,6 +723,10 @@ a.tracking-link:hover { text-decoration: underline; }
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+  min-width: 0;
+}
+.stats-date-range > div, .stats-text-filters > div {
+  min-width: 0;
 }
 .stats-controls label {
   display: block;
@@ -742,6 +746,13 @@ a.tracking-link:hover { text-decoration: underline; }
   font-family: var(--font);
   font-size: 14px !important;
   color: var(--text);
+  min-width: 0;
+  box-sizing: border-box;
+}
+.stats-controls input[type="date"] {
+  -webkit-appearance: none;
+  appearance: none;
+  min-width: 0;
 }
 .stats-controls input:focus { outline: none; border-color: var(--blue); }
 
