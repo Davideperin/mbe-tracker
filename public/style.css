@@ -632,3 +632,47 @@ a.tracking-link:hover { text-decoration: underline; }
   .modal { border-radius: var(--radius); margin-bottom: 24px; }
   .modal-overlay { align-items: center; }
 }
+
+/* ── BILLING SUMMARY ── */
+.card-billing {
+  margin: 0 16px 10px;
+  padding: 8px 12px;
+  background: var(--blue-light);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  align-items: center;
+}
+.bill-item { color: var(--text-muted); }
+.bill-item strong { color: var(--text); font-weight: 600; }
+.bill-item code { font-family: var(--mono); font-size: 11px; background: var(--surface); padding: 1px 6px; border-radius: 4px; color: var(--blue); border: 1px solid var(--blue-mid); }
+.bill-attachment { color: var(--blue); text-decoration: none; font-weight: 500; padding: 3px 8px; background: var(--surface); border-radius: 99px; border: 1px solid var(--blue-mid); }
+.bill-attachment:hover { background: var(--blue); color: white; }
+
+/* ── BILLING MODAL ── */
+.billing-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 4px;
+}
+.billing-grid > div { display: flex; flex-direction: column; }
+.billing-grid label { margin-top: 0 !important; margin-bottom: 4px !important; }
+.attachment-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--blue-light);
+  border-radius: var(--radius-sm);
+  margin-top: 6px;
+}
+.attachment-row a { color: var(--blue); text-decoration: none; font-weight: 500; flex: 1; }
+.attachment-row a:hover { text-decoration: underline; }
+
+@media (max-width: 500px) {
+  .billing-grid { grid-template-columns: 1fr; }
+}
