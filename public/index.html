@@ -68,14 +68,14 @@
 </div>
 
 <div class="stats-bar">
-  <div class="stat-item"><div class="stat-num" id="stat-all">—</div><div class="stat-lbl">Attive</div></div>
+  <div class="stat-item"><div class="stat-num" id="stat-all">—</div><div class="stat-lbl">Tutte</div></div>
   <div class="stat-item"><div class="stat-num" id="stat-transit">—</div><div class="stat-lbl">In transito</div></div>
   <div class="stat-item"><div class="stat-num" id="stat-delivered">—</div><div class="stat-lbl">Consegnate</div></div>
-  <div class="stat-item"><div class="stat-num" id="stat-cost">—</div><div class="stat-lbl">Spesa totale</div></div>
+  <div class="stat-item"><div class="stat-num" id="stat-exception">—</div><div class="stat-lbl">Eccezioni</div></div>
 </div>
 
 <div class="filters">
-  <button class="filter-chip" data-filter="ALL" onclick="setFilter('ALL')">Attive</button>
+  <button class="filter-chip" data-filter="ALL" onclick="setFilter('ALL')">Tutte</button>
   <button class="filter-chip active" data-filter="transit" onclick="setFilter('transit')">In transito</button>
   <button class="filter-chip" data-filter="pending" onclick="setFilter('pending')">In attesa</button>
   <button class="filter-chip" data-filter="delivered" onclick="setFilter('delivered')">Consegnate</button>
@@ -182,20 +182,11 @@
       </div>
     </div>
     <div class="stats-text-filters">
-      <div>
-        <label>Mittente</label>
-        <input type="text" placeholder="es. Pret a Porter" oninput="updateStatsSender(this.value)">
-      </div>
-      <div>
-        <label>Destinatario</label>
-        <input type="text" placeholder="es. Matteo Perin" oninput="updateStatsRecipient(this.value)">
-      </div>
-      <div>
-        <label>Corriere</label>
-        <select id="stats-courier" onchange="updateStatsCourier(this.value)">
-          <option value="">Tutti i corrieri</option>
-        </select>
-      </div>
+      <input type="text" placeholder="Mittente..." oninput="updateStatsSender(this.value)">
+      <input type="text" placeholder="Destinatario..." oninput="updateStatsRecipient(this.value)">
+      <select id="stats-courier" onchange="updateStatsCourier(this.value)">
+        <option value="">Tutti i corrieri</option>
+      </select>
     </div>
 
     <div class="stats-sort-row">
@@ -203,6 +194,8 @@
       <button class="sort-btn active" data-sort="date" onclick="setStatsSort('date')">Data</button>
       <button class="sort-btn" data-sort="cost" onclick="setStatsSort('cost')">💰 Costo spedizione</button>
       <button class="sort-btn" data-sort="duty" onclick="setStatsSort('duty')">🛃 Dazi</button>
+      <button class="sort-btn" id="yoy-toggle" onclick="toggleYoYCompare()">📈 Confronta anno prec.</button>
+      <button class="sort-btn reset-btn" onclick="resetStatsFilters()">↺ Reset</button>
     </div>
   </div>
 
@@ -239,22 +232,8 @@
         </div>
       </div>
       <div class="billing-row">
-        <label>Spese sdoganamento</label>
-        <div class="billing-input-group">
-          <input type="number" step="0.01" id="billing-brokerage" placeholder="0.00">
-          <select id="billing-brokerage-currency" class="currency-select">
-            <option value="EUR">€</option>
-            <option value="USD">$</option>
-          </select>
-        </div>
-      </div>
-      <div class="billing-row">
         <label>MRN</label>
         <input type="text" id="billing-mrn" placeholder="26ITQXU1TCH...">
-      </div>
-      <div class="billing-row">
-        <label>Entry No. (Customs)</label>
-        <input type="text" id="billing-entry" placeholder="SCS33180032">
       </div>
       <div class="billing-row">
         <label>Note contabili</label>
@@ -263,7 +242,7 @@
     </div>
 
     <label style="margin-top:18px;">📎 Allegato (PDF fattura, MRN, ecc.)</label>
-    <input type="file" id="billing-file" accept=".pdf,.jpg,.jpeg,.png" style="margin-bottom:8px;">
+    <input type="file" id="billing-file" accept=".pdf,.jpg,.jpeg,.png" multiple style="margin-bottom:8px;">
     <div id="billing-attachment-info"></div>
 
     <div class="modal-actions">
