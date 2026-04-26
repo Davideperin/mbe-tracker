@@ -167,19 +167,26 @@ function render() {
 }
 
 function renderStats() {
-  const all = state.shipments;
-  document.getElementById("stat-all").textContent = all.length;
-  document.getElementById("stat-transit").textContent = all.filter(s => s.status === "transit").length;
-  document.getElementById("stat-delivered").textContent = all.filter(s => s.status === "delivered").length;
-  document.getElementById("stat-exception").textContent = all.filter(s => s.status === "exception").length;
+  const active = state.shipments.filter(s => !s.archived);
+  const totalCost = state.shipments.reduce((sum, s) => sum + (parseFloat(s.cost) || 0) + (parseFloat(s.customsDuty) || 0) + (parseFloat(s.brokerage) || 0), 0);
+  document.getElementById("stat-all").textContent = active.length;
+  document.getElementById("stat-transit").textContent = active.filter(s => s.status === "transit").length;
+  document.getElementById("stat-delivered").textContent = active.filter(s => s.status === "delivered").length;
+  document.getElementById("stat-cost").textContent = totalCost > 0 ? "€" + totalCost.toFixed(0) : "—";
 }
 
 function renderList() {
   const container = document.getElementById("shipment-list");
   let list = state.shipments;
 
-  if (state.filter !== "ALL") {
-    list = list.filter(s => s.status === state.filter.toLowerCase());
+  // Filter by archive status
+  if (state.filter === "archived") {
+    list = list.filter(s => s.archived === true);
+  } else {
+    list = list.filter(s => !s.archived);
+    if (state.filter !== "ALL") {
+      list = list.filter(s => s.status === state.filter.toLowerCase());
+    }
   }
 
   if (state.search) {
@@ -268,6 +275,8 @@ function renderCard(s) {
 
     ${note ? `<div class="card-note">📝 ${escapeHtml(note)}</div>` : ""}
 
+    ${renderBillingSummary(s)}
+
     ${eventsHtml}
 
     <div class="card-footer">
@@ -275,10 +284,24 @@ function renderCard(s) {
         ${s.eventsLoaded ? "Nascondi" : "📍 Storico"}
       </button>
       <button class="btn-sm" onclick="openNoteModal('${s.masterTracking}')">✏️ Nota</button>
+      <button class="btn-sm" onclick="openBillingModal('${s.masterTracking}')">💰 Costi</button>
       ${trk && trackUrl ? `<button class="btn-sm primary" onclick="openTracking('${(s.courier||'').replace(/'/g,'')}', '${trk}')">Traccia ${courierName}</button>` : ""}
       <button class="btn-sm danger" onclick="deleteShipment('${s.masterTracking}')">🗑 Rimuovi</button>
     </div>
   </div>`;
+}
+
+function renderBillingSummary(s) {
+  const hasCost = s.cost || s.customsDuty || s.brokerage || s.mrn || s.attachmentUrl;
+  if (!hasCost) return "";
+  const parts = [];
+  if (s.cost) parts.push(`<span class="bill-item">Spedizione: <strong>€${parseFloat(s.cost).toFixed(2)}</strong></span>`);
+  if (s.customsDuty) parts.push(`<span class="bill-item">Dazi: <strong>€${parseFloat(s.customsDuty).toFixed(2)}</strong></span>`);
+  if (s.brokerage) parts.push(`<span class="bill-item">Sdoganamento: <strong>€${parseFloat(s.brokerage).toFixed(2)}</strong></span>`);
+  if (s.mrn) parts.push(`<span class="bill-item">MRN: <code>${s.mrn}</code></span>`);
+  if (s.entryNo) parts.push(`<span class="bill-item">Entry: <code>${s.entryNo}</code></span>`);
+  if (s.attachmentUrl) parts.push(`<a href="${s.attachmentUrl}" target="_blank" class="bill-attachment">📎 ${s.attachmentName || "Allegato"}</a>`);
+  return `<div class="card-billing">${parts.join("")}</div>`;
 }
 
 // ── ACTIONS ──────────────────────────────────────────────
@@ -456,6 +479,106 @@ async function saveNote() {
   }
 }
 
+
+// ── BILLING MODAL ────────────────────────────────────────
+let currentBillingTracking = null;
+
+function openBillingModal(masterTracking) {
+  currentBillingTracking = masterTracking;
+  const s = state.shipments.find(x => x.masterTracking === masterTracking);
+  if (!s) return;
+
+  document.getElementById("billing-modal-title").textContent = s.recipient || masterTracking;
+  document.getElementById("billing-cost").value = s.cost || "";
+  document.getElementById("billing-customs").value = s.customsDuty || "";
+  document.getElementById("billing-brokerage").value = s.brokerage || "";
+  document.getElementById("billing-mrn").value = s.mrn || "";
+  document.getElementById("billing-entry").value = s.entryNo || "";
+  document.getElementById("billing-notes").value = s.notesBilling || "";
+
+  // Show existing attachment if any
+  const attachInfo = document.getElementById("billing-attachment-info");
+  if (s.attachmentUrl) {
+    attachInfo.innerHTML = `<div class="attachment-row">
+      <a href="${s.attachmentUrl}" target="_blank">📎 ${s.attachmentName || "Allegato"}</a>
+      <button class="btn-sm danger" onclick="removeAttachment()">Rimuovi</button>
+    </div>`;
+  } else {
+    attachInfo.innerHTML = "";
+  }
+
+  document.getElementById("billing-modal").classList.add("open");
+}
+
+function closeBillingModal() {
+  document.getElementById("billing-modal").classList.remove("open");
+  currentBillingTracking = null;
+  document.getElementById("billing-file").value = "";
+}
+
+async function saveBilling() {
+  if (!currentBillingTracking) return;
+  const billing = {
+    cost: parseFloat(document.getElementById("billing-cost").value) || null,
+    customsDuty: parseFloat(document.getElementById("billing-customs").value) || null,
+    brokerage: parseFloat(document.getElementById("billing-brokerage").value) || null,
+    mrn: document.getElementById("billing-mrn").value.trim() || null,
+    entryNo: document.getElementById("billing-entry").value.trim() || null,
+    notesBilling: document.getElementById("billing-notes").value.trim() || null,
+  };
+
+  const btn = document.getElementById("billing-save-btn");
+  btn.disabled = true;
+  btn.textContent = "Salvataggio...";
+
+  try {
+    await updateBillingDB(currentBillingTracking, billing);
+
+    // Handle file upload if present
+    const fileInput = document.getElementById("billing-file");
+    if (fileInput.files && fileInput.files[0]) {
+      btn.textContent = "Caricamento allegato...";
+      const result = await uploadAttachment(currentBillingTracking, fileInput.files[0]);
+      const s = state.shipments.find(x => x.masterTracking === currentBillingTracking);
+      if (s) {
+        s.attachmentUrl = result.url;
+        s.attachmentName = result.name;
+      }
+    }
+
+    // Update local state
+    const s = state.shipments.find(x => x.masterTracking === currentBillingTracking);
+    if (s) Object.assign(s, billing);
+
+    closeBillingModal();
+    render();
+    showToast("✓ Costi salvati");
+  } catch (e) {
+    showToast("Errore: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Salva";
+  }
+}
+
+async function removeAttachment() {
+  if (!currentBillingTracking) return;
+  if (!confirm("Rimuovere l\'allegato?")) return;
+  const s = state.shipments.find(x => x.masterTracking === currentBillingTracking);
+  if (s && s.attachmentUrl) {
+    try {
+      await deleteAttachment(currentBillingTracking, s.attachmentUrl);
+      s.attachmentUrl = null;
+      s.attachmentName = null;
+      document.getElementById("billing-attachment-info").innerHTML = "";
+      render();
+      showToast("Allegato rimosso");
+    } catch (e) {
+      showToast("Errore: " + e.message);
+    }
+  }
+}
+
 // ── ADD MANUAL ───────────────────────────────────────────
 function openAddModal() {
   document.getElementById("add-modal").classList.add("open");
@@ -559,7 +682,7 @@ async function handleImportFile(input) {
       if (isPirateShip) {
         const trk = r["Tracking Number"] || "";
         return {
-          masterTracking: "PS-" + trk, // Use tracking as unique ID for PirateShip
+          masterTracking: "PS-" + trk,
           courierTracking: trk,
           sender: r["Ship From"] || "",
           recipient: r["Recipient"] || "",
@@ -570,7 +693,8 @@ async function handleImportFile(input) {
           state: r["Tracking Status"] || "",
           description: r["Batch"] || "",
           reference: "",
-          courier: "", // auto-detect from tracking
+          courier: "",
+          cost: parseFloat(r["Cost"]) || null,
           source: "PirateShip",
         };
       }
@@ -589,6 +713,7 @@ async function handleImportFile(input) {
         description: r["Descrizione Merce"] || r["Description"] || "",
         reference: r["Riferimento"] || r["Reference"] || "",
         courier: r["Corriere"] || r["courier"] || "",
+        cost: parseFloat(r["Prezzo Lordo Totale"]) || parseFloat(r["Prezzo Stimato"]) || parseFloat(r["Cost"]) || null,
         source: ext === "xlsx" ? "MBE" : "Import",
       };
     }).filter(r => r.masterTracking || r.courierTracking);
@@ -781,10 +906,10 @@ async function initApp() {
   loadLocalCache();
   render();
   await loadShipments();
-  // Cleanup old delivered in background
-  cleanupOldDeliveredDB().then(removed => {
-    if (removed > 0) {
-      showToast(`🧹 ${removed} spedizioni consegnate da oltre 1 mese rimosse`);
+  // Auto-archive old delivered in background (no longer deletes)
+  autoArchiveOldDelivered().then(archived => {
+    if (archived > 0) {
+      showToast(`📦 ${archived} spedizioni consegnate da oltre 1 mese archiviate`);
       loadShipments();
     }
   }).catch(() => {});
