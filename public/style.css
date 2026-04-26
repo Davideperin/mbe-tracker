@@ -822,47 +822,88 @@ a.tracking-link:hover { text-decoration: underline; }
 
 .monthly-chart {
   display: flex;
-  gap: 8px;
-  align-items: flex-end;
-  padding: 20px 0 0;
-  overflow-x: auto;
-  min-height: 220px;
-  scrollbar-width: thin;
-}
-.month-bar {
-  flex: 1;
-  min-width: 60px;
-  display: flex;
   flex-direction: column;
-  align-items: center;
-  height: 200px;
-  position: relative;
+  gap: 0;
 }
-.month-bar-value {
-  font-size: 13px;
+.month-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  transition: background 0.15s;
+}
+.month-row:last-child { border-bottom: none; }
+.month-row:hover { background: var(--surface-2); }
+.month-row.current {
+  background: var(--blue-light);
+  border-radius: var(--radius-sm);
+  border-bottom-color: transparent;
+}
+.month-row.current:hover { background: var(--blue-light); }
+.month-row-label {
+  font-weight: 500;
+  color: var(--text);
+}
+.current-badge {
+  font-size: 10px;
+  background: var(--blue);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-weight: 600;
+  margin-left: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.month-row-count {
   font-weight: 600;
   color: var(--text);
-  margin-bottom: 6px;
+  text-align: right;
 }
-.month-bar-fill {
-  width: 100%;
-  background: linear-gradient(180deg, var(--blue) 0%, #5d8af0 100%);
-  border-radius: 6px 6px 0 0;
-  min-height: 8px;
-  transition: height 0.4s ease;
-  flex: 0 0 auto;
-}
-.month-bar-label {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 6px;
-  font-weight: 500;
-}
-.month-bar-cost {
-  font-size: 10px;
+.month-row-cost {
+  font-weight: 400;
   color: var(--text-faint);
-  margin-top: 2px;
-  white-space: nowrap;
+  font-size: 12px;
+  margin-left: 8px;
+}
+.yoy-badge {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 99px;
+  font-weight: 600;
+}
+.yoy-up { background: var(--green-bg); color: var(--green); }
+.yoy-down { background: var(--red-bg); color: var(--red); }
+.yoy-eq { background: #F3F4F6; color: var(--text-muted); }
+.yoy-new { background: var(--blue-light); color: var(--blue); }
+
+.reset-btn {
+  margin-left: auto;
+  border-color: var(--red) !important;
+  color: var(--red) !important;
+}
+.reset-btn:hover {
+  background: var(--red-bg) !important;
+  color: var(--red) !important;
+}
+
+/* Mobile fix for date inputs */
+@media (max-width: 600px) {
+  .stats-controls input[type="date"] {
+    width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
+  }
+  .stats-date-range {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .stats-date-range > div {
+    min-width: 0;
+  }
 }
 
 .bill-total {
