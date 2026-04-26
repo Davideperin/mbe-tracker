@@ -217,35 +217,46 @@
     <h2>💰 Costi e Dogana</h2>
     <p class="modal-subtitle" id="billing-modal-title"></p>
 
-    <div class="billing-grid">
-      <div>
+    <div class="billing-fields">
+      <div class="billing-row">
         <label>Costo spedizione</label>
-        <input type="number" step="0.01" id="billing-cost" placeholder="0.00">
+        <div class="billing-input-group">
+          <input type="number" step="0.01" id="billing-cost" placeholder="0.00">
+          <select id="billing-cost-currency" class="currency-select">
+            <option value="EUR">€</option>
+            <option value="USD">$</option>
+          </select>
+        </div>
       </div>
-      <div>
+      <div class="billing-row">
         <label>Dazi doganali</label>
-        <input type="number" step="0.01" id="billing-customs" placeholder="0.00">
+        <div class="billing-input-group">
+          <input type="number" step="0.01" id="billing-customs" placeholder="0.00">
+          <select id="billing-customs-currency" class="currency-select">
+            <option value="EUR">€</option>
+            <option value="USD">$</option>
+          </select>
+        </div>
       </div>
-      <div>
+      <div class="billing-row">
         <label>Spese sdoganamento</label>
-        <input type="number" step="0.01" id="billing-brokerage" placeholder="0.00">
+        <div class="billing-input-group">
+          <input type="number" step="0.01" id="billing-brokerage" placeholder="0.00">
+          <select id="billing-brokerage-currency" class="currency-select">
+            <option value="EUR">€</option>
+            <option value="USD">$</option>
+          </select>
+        </div>
       </div>
-      <div>
-        <label>Valuta</label>
-        <select id="billing-currency">
-          <option value="EUR">EUR (€)</option>
-          <option value="USD">USD ($)</option>
-        </select>
-      </div>
-      <div style="grid-column: 1 / -1;">
+      <div class="billing-row">
         <label>MRN</label>
         <input type="text" id="billing-mrn" placeholder="26ITQXU1TCH...">
       </div>
-      <div style="grid-column: 1 / -1;">
+      <div class="billing-row">
         <label>Entry No. (Customs)</label>
         <input type="text" id="billing-entry" placeholder="SCS33180032">
       </div>
-      <div style="grid-column: 1 / -1;">
+      <div class="billing-row">
         <label>Note contabili</label>
         <textarea id="billing-notes" placeholder="Es: DDP MBE pagato 21/04 - fattura 2026/148"></textarea>
       </div>
