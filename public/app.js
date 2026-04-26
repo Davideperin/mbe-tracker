@@ -1103,6 +1103,19 @@ function renderStatsPage() {
     monthly[key].usd += tot.usd;
   });
 
+  // Fill in empty months in the selected range (so 1y selection shows 12 months)
+  if (statsState.dateFrom && statsState.dateTo) {
+    const start = new Date(statsState.dateFrom);
+    const end = new Date(statsState.dateTo);
+    const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+    const endMonth = new Date(end.getFullYear(), end.getMonth(), 1);
+    while (cursor <= endMonth) {
+      const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`;
+      if (!monthly[key]) monthly[key] = { count: 0, eur: 0, usd: 0 };
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+  }
+
   const sortedMonths = Object.keys(monthly).sort();
 
   // Render
