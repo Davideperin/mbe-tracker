@@ -48,6 +48,7 @@ function dbToApp(row) {
     mrn: row.mrn,
     entryNo: row.entry_no,
     notesBilling: row.notes_billing,
+    attachments: parseAttachments(row.attachment_url, row.attachment_name),
     attachmentUrl: row.attachment_url,
     attachmentName: row.attachment_name,
     archived: row.archived,
@@ -188,37 +189,47 @@ async function autoArchiveOldDelivered() {
 // ── ATTACHMENTS ──────────────────────────────────────────
 async function uploadAttachment(masterTracking, file) {
   const ext = file.name.split(".").pop();
-  const fileName = `${masterTracking}_${Date.now()}.${ext}`;
+  const fileName = `${masterTracking}_${Date.now()}_${Math.random().toString(36).slice(2,7)}.${ext}`;
   const { error: uploadError } = await sb.storage
     .from("attachments")
     .upload(fileName, file, { cacheControl: "3600", upsert: false });
   if (uploadError) throw uploadError;
 
-  // Get signed URL (valid for 1 year)
   const { data: urlData, error: urlError } = await sb.storage
     .from("attachments")
     .createSignedUrl(fileName, 60 * 60 * 24 * 365);
   if (urlError) throw urlError;
 
-  // Save URL and original name in DB
-  await sb.from("shipments").update({
-    attachment_url: urlData.signedUrl,
-    attachment_name: file.name,
-  }).eq("master_tracking", masterTracking);
-
   return { url: urlData.signedUrl, name: file.name, path: fileName };
 }
 
-async function deleteAttachment(masterTracking, attachmentUrl) {
-  // Extract filename from URL
-  try {
-    const match = attachmentUrl.match(/\/attachments\/([^?]+)/);
-    if (match) {
-      await sb.storage.from("attachments").remove([match[1]]);
-    }
-  } catch {}
+async function saveAttachmentsList(masterTracking, attachments) {
+  // Store as JSON in attachment_url field (legacy field repurposed as JSON list)
   await sb.from("shipments").update({
-    attachment_url: null,
-    attachment_name: null,
+    attachment_url: JSON.stringify(attachments),
+    attachment_name: attachments.length > 0 ? `${attachments.length} file` : null,
   }).eq("master_tracking", masterTracking);
+}
+
+async function deleteAttachmentFile(path) {
+  try {
+    await sb.storage.from("attachments").remove([path]);
+  } catch {}
+}
+
+
+function parseAttachments(url, name) {
+  if (!url) return [];
+  // Try parsing as JSON array (new format)
+  try {
+    const parsed = JSON.parse(url);
+    if (Array.isArray(parsed)) return parsed;
+  } catch {}
+  // Legacy single URL format
+  return [{ url, name: name || "Allegato", path: extractPathFromUrl(url) }];
+}
+
+function extractPathFromUrl(url) {
+  const m = url.match(/\/attachments\/([^?]+)/);
+  return m ? m[1] : null;
 }

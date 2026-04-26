@@ -168,20 +168,10 @@ function render() {
 
 function renderStats() {
   const active = state.shipments.filter(s => !s.archived);
-  let totalEur = 0, totalUsd = 0;
-  state.shipments.forEach(s => {
-    const t = computeShipmentTotals(s);
-    totalEur += t.eur;
-    totalUsd += t.usd;
-  });
   document.getElementById("stat-all").textContent = active.length;
   document.getElementById("stat-transit").textContent = active.filter(s => s.status === "transit").length;
   document.getElementById("stat-delivered").textContent = active.filter(s => s.status === "delivered").length;
-  let costStr = "—";
-  if (totalEur > 0 && totalUsd > 0) costStr = `€${totalEur.toFixed(0)} · $${totalUsd.toFixed(0)}`;
-  else if (totalEur > 0) costStr = `€${totalEur.toFixed(0)}`;
-  else if (totalUsd > 0) costStr = `$${totalUsd.toFixed(0)}`;
-  document.getElementById("stat-cost").textContent = costStr;
+  document.getElementById("stat-exception").textContent = active.filter(s => s.status === "exception").length;
 }
 
 function renderList() {
@@ -301,7 +291,7 @@ function renderCard(s) {
 }
 
 function renderBillingSummary(s) {
-  const hasCost = s.cost || s.customsDuty || s.brokerage || s.mrn || s.attachmentUrl;
+  const hasCost = s.cost || s.customsDuty || s.brokerage || s.mrn || (s.attachments && s.attachments.length > 0);
   if (!hasCost) return "";
   const parts = [];
   if (s.cost) parts.push(`<span class="bill-item">Spedizione: <strong>${currencySymbol(s.costCurrency)}${parseFloat(s.cost).toFixed(2)}</strong></span>`);
@@ -317,7 +307,11 @@ function renderBillingSummary(s) {
   }
   if (s.mrn) parts.push(`<span class="bill-item">MRN: <code>${s.mrn}</code></span>`);
   if (s.entryNo) parts.push(`<span class="bill-item">Entry: <code>${s.entryNo}</code></span>`);
-  if (s.attachmentUrl) parts.push(`<a href="${s.attachmentUrl}" target="_blank" class="bill-attachment">📎 ${s.attachmentName || "Allegato"}</a>`);
+  if (s.attachments && s.attachments.length > 0) {
+    s.attachments.forEach(a => {
+      parts.push(`<a href="${a.url}" target="_blank" class="bill-attachment">📎 ${a.name || "Allegato"}</a>`);
+    });
+  }
   return `<div class="card-billing">${parts.join("")}</div>`;
 }
 
@@ -526,29 +520,66 @@ function openBillingModal(masterTracking) {
   const s = state.shipments.find(x => x.masterTracking === masterTracking);
   if (!s) return;
 
-  document.getElementById("billing-modal-title").textContent = s.recipient || masterTracking;
-  document.getElementById("billing-cost").value = s.cost || "";
-  document.getElementById("billing-cost-currency").value = s.costCurrency || "EUR";
-  document.getElementById("billing-customs").value = s.customsDuty || "";
-  document.getElementById("billing-customs-currency").value = s.customsDutyCurrency || "EUR";
-  document.getElementById("billing-brokerage").value = s.brokerage || "";
-  document.getElementById("billing-brokerage-currency").value = s.brokerageCurrency || "EUR";
-  document.getElementById("billing-mrn").value = s.mrn || "";
-  document.getElementById("billing-entry").value = s.entryNo || "";
-  document.getElementById("billing-notes").value = s.notesBilling || "";
+  setVal("billing-modal-title", s.recipient || masterTracking, "text");
+  setVal("billing-cost", s.cost || "");
+  setVal("billing-cost-currency", s.costCurrency || "EUR");
+  setVal("billing-customs", s.customsDuty || "");
+  setVal("billing-customs-currency", s.customsDutyCurrency || "EUR");
+  setVal("billing-brokerage", s.brokerage || "");
+  setVal("billing-brokerage-currency", s.brokerageCurrency || "EUR");
+  setVal("billing-mrn", s.mrn || "");
+  setVal("billing-entry", s.entryNo || "");
+  setVal("billing-notes", s.notesBilling || "");
 
-  // Show existing attachment if any
-  const attachInfo = document.getElementById("billing-attachment-info");
-  if (s.attachmentUrl) {
-    attachInfo.innerHTML = `<div class="attachment-row">
-      <a href="${s.attachmentUrl}" target="_blank">📎 ${s.attachmentName || "Allegato"}</a>
-      <button class="btn-sm danger" onclick="removeAttachment()">Rimuovi</button>
-    </div>`;
-  } else {
-    attachInfo.innerHTML = "";
-  }
-
+  renderAttachmentsList(s);
   document.getElementById("billing-modal").classList.add("open");
+}
+
+// Safe setter: skips elements that don't exist
+function setVal(id, val, type) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (type === "text") el.textContent = val;
+  else el.value = val;
+}
+
+// Safe getter
+function getVal(id, defaultVal) {
+  const el = document.getElementById(id);
+  return el ? el.value : (defaultVal !== undefined ? defaultVal : "");
+}
+
+function renderAttachmentsList(s) {
+  const attachInfo = document.getElementById("billing-attachment-info");
+  const list = s.attachments || [];
+  if (list.length === 0) {
+    attachInfo.innerHTML = "";
+    return;
+  }
+  attachInfo.innerHTML = list.map((a, i) => `
+    <div class="attachment-row">
+      <a href="${a.url}" target="_blank">📎 ${a.name || "Allegato"}</a>
+      <button class="btn-sm danger" onclick="removeAttachmentAt(${i})">Rimuovi</button>
+    </div>
+  `).join("");
+}
+
+async function removeAttachmentAt(idx) {
+  if (!currentBillingTracking) return;
+  if (!confirm("Rimuovere questo allegato?")) return;
+  const s = state.shipments.find(x => x.masterTracking === currentBillingTracking);
+  if (!s || !s.attachments) return;
+  const removed = s.attachments[idx];
+  s.attachments = s.attachments.filter((_, i) => i !== idx);
+  try {
+    if (removed && removed.path) await deleteAttachmentFile(removed.path);
+    await saveAttachmentsList(currentBillingTracking, s.attachments);
+    renderAttachmentsList(s);
+    render();
+    showToast("Allegato rimosso");
+  } catch (e) {
+    showToast("Errore: " + e.message);
+  }
 }
 
 function closeBillingModal() {
@@ -560,15 +591,15 @@ function closeBillingModal() {
 async function saveBilling() {
   if (!currentBillingTracking) return;
   const billing = {
-    cost: parseFloat(document.getElementById("billing-cost").value) || null,
-    costCurrency: document.getElementById("billing-cost-currency").value || "EUR",
-    customsDuty: parseFloat(document.getElementById("billing-customs").value) || null,
-    customsDutyCurrency: document.getElementById("billing-customs-currency").value || "EUR",
-    brokerage: parseFloat(document.getElementById("billing-brokerage").value) || null,
-    brokerageCurrency: document.getElementById("billing-brokerage-currency").value || "EUR",
-    mrn: document.getElementById("billing-mrn").value.trim() || null,
-    entryNo: document.getElementById("billing-entry").value.trim() || null,
-    notesBilling: document.getElementById("billing-notes").value.trim() || null,
+    cost: parseFloat(getVal("billing-cost")) || null,
+    costCurrency: getVal("billing-cost-currency", "EUR"),
+    customsDuty: parseFloat(getVal("billing-customs")) || null,
+    customsDutyCurrency: getVal("billing-customs-currency", "EUR"),
+    brokerage: parseFloat(getVal("billing-brokerage")) || null,
+    brokerageCurrency: getVal("billing-brokerage-currency", "EUR"),
+    mrn: getVal("billing-mrn").trim() || null,
+    entryNo: getVal("billing-entry").trim() || null,
+    notesBilling: getVal("billing-notes").trim() || null,
   };
 
   const btn = document.getElementById("billing-save-btn");
@@ -578,16 +609,18 @@ async function saveBilling() {
   try {
     await updateBillingDB(currentBillingTracking, billing);
 
-    // Handle file upload if present
+    // Handle multiple file uploads
     const fileInput = document.getElementById("billing-file");
-    if (fileInput.files && fileInput.files[0]) {
-      btn.textContent = "Caricamento allegato...";
-      const result = await uploadAttachment(currentBillingTracking, fileInput.files[0]);
+    if (fileInput.files && fileInput.files.length > 0) {
       const s = state.shipments.find(x => x.masterTracking === currentBillingTracking);
-      if (s) {
-        s.attachmentUrl = result.url;
-        s.attachmentName = result.name;
+      if (!s.attachments) s.attachments = [];
+      for (let i = 0; i < fileInput.files.length; i++) {
+        const f = fileInput.files[i];
+        btn.textContent = `Caricamento ${i+1}/${fileInput.files.length}...`;
+        const result = await uploadAttachment(currentBillingTracking, f);
+        s.attachments.push(result);
       }
+      await saveAttachmentsList(currentBillingTracking, s.attachments);
     }
 
     // Update local state
@@ -602,24 +635,6 @@ async function saveBilling() {
   } finally {
     btn.disabled = false;
     btn.textContent = "Salva";
-  }
-}
-
-async function removeAttachment() {
-  if (!currentBillingTracking) return;
-  if (!confirm("Rimuovere l\'allegato?")) return;
-  const s = state.shipments.find(x => x.masterTracking === currentBillingTracking);
-  if (s && s.attachmentUrl) {
-    try {
-      await deleteAttachment(currentBillingTracking, s.attachmentUrl);
-      s.attachmentUrl = null;
-      s.attachmentName = null;
-      document.getElementById("billing-attachment-info").innerHTML = "";
-      render();
-      showToast("Allegato rimosso");
-    } catch (e) {
-      showToast("Errore: " + e.message);
-    }
   }
 }
 
@@ -920,31 +935,41 @@ function showToast(msg) {
 
 function formatDate(d) {
   if (!d) return "—";
-  if (typeof d === "string" && d.includes("/")) {
-    const parts = d.split("/");
-    if (parts.length === 3) {
-      const [day, month, year] = parts;
-      const date = new Date(`${year}-${month.padStart(2,"0")}-${day.padStart(2,"0")}`);
-      if (!isNaN(date)) return date.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
-    }
-  }
-  try {
-    const date = new Date(d);
-    if (!isNaN(date)) return date.toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
-  } catch {}
-  return d;
+  const ts = parseDateForSort(d);
+  if (ts === 0) return d;
+  return new Date(ts).toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
 }
 
 function parseDateForSort(d) {
   if (!d) return 0;
-  if (typeof d === "string" && d.includes("/")) {
-    const parts = d.split("/");
+  if (typeof d !== "string") {
+    const t = new Date(d).getTime();
+    return isNaN(t) ? 0 : t;
+  }
+
+  // PirateShip format: "Tuesday, 4/21/26 4:22 PM PDT"
+  const psMatch = d.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (psMatch && d.includes(",")) {
+    const [_, m, day, y] = psMatch;
+    let year = parseInt(y);
+    if (year < 100) year += 2000;
+    const t = new Date(year, parseInt(m) - 1, parseInt(day)).getTime();
+    if (!isNaN(t)) return t;
+  }
+
+  // Italian format: DD/MM/YYYY
+  if (d.includes("/")) {
+    const parts = d.split(" ")[0].split("/"); // take only date part if there's time
     if (parts.length === 3) {
       const [day, month, year] = parts;
-      const t = new Date(`${year}-${month.padStart(2,"0")}-${day.padStart(2,"0")}`).getTime();
-      return isNaN(t) ? 0 : t;
+      let y = parseInt(year);
+      if (y < 100) y += 2000;
+      const t = new Date(y, parseInt(month) - 1, parseInt(day)).getTime();
+      if (!isNaN(t)) return t;
     }
   }
+
+  // ISO or any other format
   const t = new Date(d).getTime();
   return isNaN(t) ? 0 : t;
 }
@@ -961,7 +986,9 @@ const statsState = {
   filterSender: "",
   filterRecipient: "",
   filterCourier: "",
-  sortBy: "date",  // date | cost | duty
+  sortBy: "date",
+  compareYoY: false,
+  quickRange: 6,
 };
 
 function openStats() {
@@ -971,9 +998,16 @@ function openStats() {
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
     statsState.dateFrom = sixMonthsAgo.toISOString().slice(0, 10);
     statsState.dateTo = new Date().toISOString().slice(0, 10);
+    statsState.quickRange = 6;
   }
   document.getElementById("stats-screen").style.display = "block";
   document.getElementById("app-screen").style.display = "none";
+  // Set active button
+  setTimeout(() => {
+    document.querySelectorAll(".stats-quick-ranges .filter-chip").forEach(b => {
+      b.classList.toggle("active", parseInt(b.dataset.months) === (statsState.quickRange || 6));
+    });
+  }, 0);
   renderStatsPage();
 }
 
@@ -1068,6 +1102,19 @@ function renderStatsPage() {
     monthly[key].eur += tot.eur;
     monthly[key].usd += tot.usd;
   });
+
+  // Fill in empty months in the selected range (so 1y selection shows 12 months)
+  if (statsState.dateFrom && statsState.dateTo) {
+    const start = new Date(statsState.dateFrom);
+    const end = new Date(statsState.dateTo);
+    const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+    const endMonth = new Date(end.getFullYear(), end.getMonth(), 1);
+    while (cursor <= endMonth) {
+      const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`;
+      if (!monthly[key]) monthly[key] = { count: 0, eur: 0, usd: 0 };
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+  }
 
   const sortedMonths = Object.keys(monthly).sort();
 
@@ -1182,21 +1229,56 @@ function renderTopShipments(list) {
 }
 
 function renderMonthlyChart(months, data) {
-  const maxCount = Math.max(...months.map(m => data[m].count), 1);
+  // Compute YoY data if enabled
+  let prevData = {};
+  if (statsState.compareYoY) {
+    state.shipments.forEach(s => {
+      const t = parseDateForSort(s.date);
+      if (!t) return;
+      const d = new Date(t);
+      const prevYearKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      if (!prevData[prevYearKey]) prevData[prevYearKey] = { count: 0, eur: 0, usd: 0 };
+      prevData[prevYearKey].count++;
+      const tot = computeShipmentTotals(s);
+      prevData[prevYearKey].eur += tot.eur;
+      prevData[prevYearKey].usd += tot.usd;
+    });
+  }
+
+  const monthNames = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"];
+  const now = new Date();
+  const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
   return months.map(m => {
     const d = data[m];
-    const heightPct = (d.count / maxCount) * 100;
     const [year, month] = m.split("-");
-    const monthNames = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"];
     const label = monthNames[parseInt(month) - 1] + " " + year.slice(2);
+    const isCurrent = m === currentKey;
+
+    // YoY compare: same month previous year
+    let yoyText = "";
+    if (statsState.compareYoY) {
+      const prevKey = `${parseInt(year) - 1}-${month}`;
+      const prev = prevData[prevKey];
+      if (prev) {
+        const diff = d.count - prev.count;
+        const pct = prev.count > 0 ? Math.round((diff / prev.count) * 100) : 0;
+        const sign = diff > 0 ? "↑" : diff < 0 ? "↓" : "=";
+        const cls = diff > 0 ? "yoy-up" : diff < 0 ? "yoy-down" : "yoy-eq";
+        yoyText = `<span class="yoy-badge ${cls}">${sign} ${Math.abs(diff)} (${pct >= 0 ? "+" : ""}${pct}%)</span>`;
+      } else {
+        yoyText = `<span class="yoy-badge yoy-new">nuovo</span>`;
+      }
+    }
+
     const costParts = [];
     if (d.eur > 0) costParts.push(`€${d.eur.toFixed(0)}`);
     if (d.usd > 0) costParts.push(`$${d.usd.toFixed(0)}`);
-    return `<div class="month-bar">
-      <div class="month-bar-value">${d.count}</div>
-      <div class="month-bar-fill" style="height:${heightPct}%"></div>
-      <div class="month-bar-label">${label}</div>
-      <div class="month-bar-cost">${costParts.join(" + ") || "—"}</div>
+
+    return `<div class="month-row ${isCurrent ? "current" : ""}">
+      <div class="month-row-label">${label}${isCurrent ? ' <span class="current-badge">in corso</span>' : ""}</div>
+      <div class="month-row-count">${d.count} <span class="month-row-cost">${costParts.join(" · ") || "—"}</span></div>
+      ${yoyText}
     </div>`;
   }).join("");
 }
@@ -1226,6 +1308,28 @@ function updateStatsCourier(v) {
   renderStatsPage();
 }
 
+function resetStatsFilters() {
+  const sixMonthsAgo = new Date();
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+  statsState.dateFrom = sixMonthsAgo.toISOString().slice(0, 10);
+  statsState.dateTo = new Date().toISOString().slice(0, 10);
+  statsState.filterSender = "";
+  statsState.filterRecipient = "";
+  statsState.filterCourier = "";
+  statsState.compareYoY = false;
+  // Clear input fields
+  document.querySelectorAll(".stats-text-filters input").forEach(i => i.value = "");
+  const cs = document.getElementById("stats-courier");
+  if (cs) cs.value = "";
+  renderStatsPage();
+}
+
+function toggleYoYCompare() {
+  statsState.compareYoY = !statsState.compareYoY;
+  document.getElementById("yoy-toggle").classList.toggle("active", statsState.compareYoY);
+  renderStatsPage();
+}
+
 function setStatsSort(by) {
   statsState.sortBy = by;
   document.querySelectorAll(".sort-btn").forEach(b => {
@@ -1240,6 +1344,11 @@ function setStatsRange(months) {
   from.setMonth(from.getMonth() - months);
   statsState.dateFrom = from.toISOString().slice(0, 10);
   statsState.dateTo = to.toISOString().slice(0, 10);
+  statsState.quickRange = months;
+  // Update visual active state
+  document.querySelectorAll(".stats-quick-ranges .filter-chip").forEach(b => {
+    b.classList.toggle("active", parseInt(b.dataset.months) === months);
+  });
   renderStatsPage();
 }
 
