@@ -807,7 +807,10 @@ async function handleImportFile(input) {
       else {
         const oldStatus = found.status;
         const newStatus = normalizeStatus(r.state, r.courierTracking);
-        if (oldStatus !== newStatus || found.state !== r.state) {
+        const statusChanged = oldStatus !== newStatus || found.state !== r.state;
+        // Detect cost change: import has a cost AND it differs from existing
+        const costChanged = r.cost && parseFloat(r.cost) > 0 && parseFloat(r.cost) !== parseFloat(found.cost || 0);
+        if (statusChanged || costChanged) {
           updatedOnes.push({ existing: found, incoming: r, oldStatus, newStatus });
         } else unchanged++;
       }
@@ -854,7 +857,29 @@ async function confirmImport() {
 
     // Update existing
     for (const { existing, incoming } of importPending.updates) {
-      const merged = enrichShipment({ ...existing, ...incoming });
+      // Smart merge: keep manually-edited fields from existing, but apply imported values where present
+      const merged = enrichShipment({
+        ...existing,
+        // Always update from import:
+        state: incoming.state || existing.state,
+        status: normalizeStatus(incoming.state, incoming.courierTracking),
+        date: incoming.date || existing.date,
+        // Update cost only if import has a value (don't wipe manually-entered cost)
+        cost: incoming.cost !== null && incoming.cost !== undefined ? incoming.cost : existing.cost,
+        costCurrency: incoming.costCurrency || existing.costCurrency || "EUR",
+        // Preserve manually entered billing fields (MRN, customs, brokerage, notes, attachments)
+        customsDuty: existing.customsDuty,
+        customsDutyCurrency: existing.customsDutyCurrency,
+        brokerage: existing.brokerage,
+        brokerageCurrency: existing.brokerageCurrency,
+        mrn: existing.mrn,
+        entryNo: existing.entryNo,
+        notesBilling: existing.notesBilling,
+        attachments: existing.attachments,
+        attachmentUrl: existing.attachmentUrl,
+        attachmentName: existing.attachmentName,
+        note: existing.note,
+      });
       await updateShipmentDB(existing.masterTracking, merged);
       const idx = state.shipments.findIndex(s => s.masterTracking === existing.masterTracking);
       if (idx >= 0) state.shipments[idx] = merged;
