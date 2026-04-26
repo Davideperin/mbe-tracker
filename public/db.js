@@ -51,6 +51,8 @@ function dbToApp(row) {
     attachmentUrl: row.attachment_url,
     attachmentName: row.attachment_name,
     archived: row.archived,
+    currency: row.currency || "EUR",
+    deliveryDate: row.delivery_date,
     eventsLoaded: false,
   };
 }
@@ -84,6 +86,8 @@ function appToDb(s) {
     attachment_url: s.attachmentUrl ?? null,
     attachment_name: s.attachmentName ?? null,
     archived: s.archived ?? false,
+    currency: s.currency || "EUR",
+    delivery_date: s.deliveryDate ?? null,
   };
 }
 
@@ -145,6 +149,7 @@ async function updateBillingDB(masterTracking, billing) {
     cost: billing.cost ?? null,
     customs_duty: billing.customsDuty ?? null,
     brokerage: billing.brokerage ?? null,
+    currency: billing.currency || "EUR",
     mrn: billing.mrn ?? null,
     entry_no: billing.entryNo ?? null,
     notes_billing: billing.notesBilling ?? null,
