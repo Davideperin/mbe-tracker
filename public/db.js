@@ -11,7 +11,6 @@ async function signOut() {
   await sb.auth.signOut();
   state.user = null;
   state.shipments = [];
-  state.notes = {};
   showLoginScreen();
 }
 
@@ -22,7 +21,6 @@ async function getCurrentUser() {
 
 // ── SHIPMENTS ────────────────────────────────────────────
 
-// Map DB row (snake_case) → app object (camelCase)
 function dbToApp(row) {
   return {
     id: row.id,
@@ -44,11 +42,24 @@ function dbToApp(row) {
     progress: row.progress,
     events: row.events || [],
     note: row.note,
+    cost: row.cost,
+    customsDuty: row.customs_duty,
+    brokerage: row.brokerage,
+    mrn: row.mrn,
+    entryNo: row.entry_no,
+    notesBilling: row.notes_billing,
+    attachmentUrl: row.attachment_url,
+    attachmentName: row.attachment_name,
+    archived: row.archived,
+    currency: row.currency || "EUR",  // legacy field, kept for backward compat
+    costCurrency: row.cost_currency || "EUR",
+    customsDutyCurrency: row.customs_duty_currency || "EUR",
+    brokerageCurrency: row.brokerage_currency || "EUR",
+    deliveryDate: row.delivery_date,
     eventsLoaded: false,
   };
 }
 
-// Map app object → DB row
 function appToDb(s) {
   return {
     master_tracking: s.masterTracking,
@@ -69,6 +80,20 @@ function appToDb(s) {
     progress: s.progress,
     events: s.events || [],
     note: s.note,
+    cost: s.cost ?? null,
+    customs_duty: s.customsDuty ?? null,
+    brokerage: s.brokerage ?? null,
+    mrn: s.mrn ?? null,
+    entry_no: s.entryNo ?? null,
+    notes_billing: s.notesBilling ?? null,
+    attachment_url: s.attachmentUrl ?? null,
+    attachment_name: s.attachmentName ?? null,
+    archived: s.archived ?? false,
+    currency: s.currency || "EUR",
+    cost_currency: s.costCurrency || "EUR",
+    customs_duty_currency: s.customsDutyCurrency || "EUR",
+    brokerage_currency: s.brokerageCurrency || "EUR",
+    delivery_date: s.deliveryDate ?? null,
   };
 }
 
@@ -84,10 +109,7 @@ async function loadShipmentsFromDB() {
 async function insertShipments(shipments) {
   if (!shipments.length) return [];
   const rows = shipments.map(appToDb);
-  const { data, error } = await sb
-    .from("shipments")
-    .insert(rows)
-    .select();
+  const { data, error } = await sb.from("shipments").insert(rows).select();
   if (error) throw error;
   return data.map(dbToApp);
 }
@@ -104,18 +126,12 @@ async function updateShipmentDB(masterTracking, updates) {
 }
 
 async function deleteShipmentDB(masterTracking) {
-  const { error } = await sb
-    .from("shipments")
-    .delete()
-    .eq("master_tracking", masterTracking);
+  const { error } = await sb.from("shipments").delete().eq("master_tracking", masterTracking);
   if (error) throw error;
 }
 
 async function bulkDeleteDB(masterTrackings) {
-  const { error } = await sb
-    .from("shipments")
-    .delete()
-    .in("master_tracking", masterTrackings);
+  const { error } = await sb.from("shipments").delete().in("master_tracking", masterTrackings);
   if (error) throw error;
 }
 
@@ -129,29 +145,80 @@ async function bulkUpdateStatusDB(masterTrackings, newStatus) {
 }
 
 async function updateNoteDB(masterTracking, note) {
-  const { error } = await sb
-    .from("shipments")
-    .update({ note })
-    .eq("master_tracking", masterTracking);
+  const { error } = await sb.from("shipments").update({ note }).eq("master_tracking", masterTracking);
   if (error) throw error;
 }
 
-// Cleanup old delivered shipments (>30 days)
-async function cleanupOldDeliveredDB() {
+// Update billing fields
+async function updateBillingDB(masterTracking, billing) {
+  const { error } = await sb.from("shipments").update({
+    cost: billing.cost ?? null,
+    customs_duty: billing.customsDuty ?? null,
+    brokerage: billing.brokerage ?? null,
+    cost_currency: billing.costCurrency || "EUR",
+    customs_duty_currency: billing.customsDutyCurrency || "EUR",
+    brokerage_currency: billing.brokerageCurrency || "EUR",
+    mrn: billing.mrn ?? null,
+    entry_no: billing.entryNo ?? null,
+    notes_billing: billing.notesBilling ?? null,
+  }).eq("master_tracking", masterTracking);
+  if (error) throw error;
+}
+
+// Auto-archive delivered shipments older than 30 days (instead of deleting)
+async function autoArchiveOldDelivered() {
   const { data, error } = await sb
     .from("shipments")
-    .select("id, date, status")
-    .eq("status", "delivered");
+    .select("id, date, status, archived")
+    .eq("status", "delivered")
+    .eq("archived", false);
   if (error) return 0;
 
   const cutoff = Date.now() - (30 * 24 * 60 * 60 * 1000);
-  const toDelete = data.filter(s => {
+  const toArchive = data.filter(s => {
     const ts = parseDateForSort(s.date);
     return ts > 0 && ts < cutoff;
   }).map(s => s.id);
 
-  if (!toDelete.length) return 0;
+  if (!toArchive.length) return 0;
+  await sb.from("shipments").update({ archived: true }).in("id", toArchive);
+  return toArchive.length;
+}
 
-  await sb.from("shipments").delete().in("id", toDelete);
-  return toDelete.length;
+// ── ATTACHMENTS ──────────────────────────────────────────
+async function uploadAttachment(masterTracking, file) {
+  const ext = file.name.split(".").pop();
+  const fileName = `${masterTracking}_${Date.now()}.${ext}`;
+  const { error: uploadError } = await sb.storage
+    .from("attachments")
+    .upload(fileName, file, { cacheControl: "3600", upsert: false });
+  if (uploadError) throw uploadError;
+
+  // Get signed URL (valid for 1 year)
+  const { data: urlData, error: urlError } = await sb.storage
+    .from("attachments")
+    .createSignedUrl(fileName, 60 * 60 * 24 * 365);
+  if (urlError) throw urlError;
+
+  // Save URL and original name in DB
+  await sb.from("shipments").update({
+    attachment_url: urlData.signedUrl,
+    attachment_name: file.name,
+  }).eq("master_tracking", masterTracking);
+
+  return { url: urlData.signedUrl, name: file.name, path: fileName };
+}
+
+async function deleteAttachment(masterTracking, attachmentUrl) {
+  // Extract filename from URL
+  try {
+    const match = attachmentUrl.match(/\/attachments\/([^?]+)/);
+    if (match) {
+      await sb.storage.from("attachments").remove([match[1]]);
+    }
+  } catch {}
+  await sb.from("shipments").update({
+    attachment_url: null,
+    attachment_name: null,
+  }).eq("master_tracking", masterTracking);
 }

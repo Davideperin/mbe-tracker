@@ -167,19 +167,35 @@ function render() {
 }
 
 function renderStats() {
-  const all = state.shipments;
-  document.getElementById("stat-all").textContent = all.length;
-  document.getElementById("stat-transit").textContent = all.filter(s => s.status === "transit").length;
-  document.getElementById("stat-delivered").textContent = all.filter(s => s.status === "delivered").length;
-  document.getElementById("stat-exception").textContent = all.filter(s => s.status === "exception").length;
+  const active = state.shipments.filter(s => !s.archived);
+  let totalEur = 0, totalUsd = 0;
+  state.shipments.forEach(s => {
+    const t = computeShipmentTotals(s);
+    totalEur += t.eur;
+    totalUsd += t.usd;
+  });
+  document.getElementById("stat-all").textContent = active.length;
+  document.getElementById("stat-transit").textContent = active.filter(s => s.status === "transit").length;
+  document.getElementById("stat-delivered").textContent = active.filter(s => s.status === "delivered").length;
+  let costStr = "—";
+  if (totalEur > 0 && totalUsd > 0) costStr = `€${totalEur.toFixed(0)} · $${totalUsd.toFixed(0)}`;
+  else if (totalEur > 0) costStr = `€${totalEur.toFixed(0)}`;
+  else if (totalUsd > 0) costStr = `$${totalUsd.toFixed(0)}`;
+  document.getElementById("stat-cost").textContent = costStr;
 }
 
 function renderList() {
   const container = document.getElementById("shipment-list");
   let list = state.shipments;
 
-  if (state.filter !== "ALL") {
-    list = list.filter(s => s.status === state.filter.toLowerCase());
+  // Filter by archive status
+  if (state.filter === "archived") {
+    list = list.filter(s => s.archived === true);
+  } else {
+    list = list.filter(s => !s.archived);
+    if (state.filter !== "ALL") {
+      list = list.filter(s => s.status === state.filter.toLowerCase());
+    }
   }
 
   if (state.search) {
@@ -268,6 +284,8 @@ function renderCard(s) {
 
     ${note ? `<div class="card-note">📝 ${escapeHtml(note)}</div>` : ""}
 
+    ${renderBillingSummary(s)}
+
     ${eventsHtml}
 
     <div class="card-footer">
@@ -275,10 +293,53 @@ function renderCard(s) {
         ${s.eventsLoaded ? "Nascondi" : "📍 Storico"}
       </button>
       <button class="btn-sm" onclick="openNoteModal('${s.masterTracking}')">✏️ Nota</button>
+      <button class="btn-sm" onclick="openBillingModal('${s.masterTracking}')">💰 Costi</button>
       ${trk && trackUrl ? `<button class="btn-sm primary" onclick="openTracking('${(s.courier||'').replace(/'/g,'')}', '${trk}')">Traccia ${courierName}</button>` : ""}
       <button class="btn-sm danger" onclick="deleteShipment('${s.masterTracking}')">🗑 Rimuovi</button>
     </div>
   </div>`;
+}
+
+function renderBillingSummary(s) {
+  const hasCost = s.cost || s.customsDuty || s.brokerage || s.mrn || s.attachmentUrl;
+  if (!hasCost) return "";
+  const parts = [];
+  if (s.cost) parts.push(`<span class="bill-item">Spedizione: <strong>${currencySymbol(s.costCurrency)}${parseFloat(s.cost).toFixed(2)}</strong></span>`);
+  if (s.customsDuty) parts.push(`<span class="bill-item">Dazi: <strong>${currencySymbol(s.customsDutyCurrency)}${parseFloat(s.customsDuty).toFixed(2)}</strong></span>`);
+  if (s.brokerage) parts.push(`<span class="bill-item">Sdoganamento: <strong>${currencySymbol(s.brokerageCurrency)}${parseFloat(s.brokerage).toFixed(2)}</strong></span>`);
+  // Total per currency
+  const totals = computeShipmentTotals(s);
+  const totalParts = [];
+  if (totals.eur > 0) totalParts.push(`€${totals.eur.toFixed(2)}`);
+  if (totals.usd > 0) totalParts.push(`$${totals.usd.toFixed(2)}`);
+  if (totalParts.length > 0 && (s.cost ? 1 : 0) + (s.customsDuty ? 1 : 0) + (s.brokerage ? 1 : 0) > 1) {
+    parts.push(`<span class="bill-item bill-total">Totale: <strong>${totalParts.join(" + ")}</strong></span>`);
+  }
+  if (s.mrn) parts.push(`<span class="bill-item">MRN: <code>${s.mrn}</code></span>`);
+  if (s.entryNo) parts.push(`<span class="bill-item">Entry: <code>${s.entryNo}</code></span>`);
+  if (s.attachmentUrl) parts.push(`<a href="${s.attachmentUrl}" target="_blank" class="bill-attachment">📎 ${s.attachmentName || "Allegato"}</a>`);
+  return `<div class="card-billing">${parts.join("")}</div>`;
+}
+
+function computeShipmentTotals(s) {
+  let eur = 0, usd = 0;
+  const items = [
+    { val: s.cost, cur: s.costCurrency },
+    { val: s.customsDuty, cur: s.customsDutyCurrency },
+    { val: s.brokerage, cur: s.brokerageCurrency },
+  ];
+  items.forEach(({ val, cur }) => {
+    const v = parseFloat(val) || 0;
+    if (v > 0) {
+      if (cur === "USD") usd += v;
+      else eur += v;
+    }
+  });
+  return { eur, usd };
+}
+
+function currencySymbol(c) {
+  return c === "USD" ? "$" : "€";
 }
 
 // ── ACTIONS ──────────────────────────────────────────────
@@ -456,6 +517,112 @@ async function saveNote() {
   }
 }
 
+
+// ── BILLING MODAL ────────────────────────────────────────
+let currentBillingTracking = null;
+
+function openBillingModal(masterTracking) {
+  currentBillingTracking = masterTracking;
+  const s = state.shipments.find(x => x.masterTracking === masterTracking);
+  if (!s) return;
+
+  document.getElementById("billing-modal-title").textContent = s.recipient || masterTracking;
+  document.getElementById("billing-cost").value = s.cost || "";
+  document.getElementById("billing-cost-currency").value = s.costCurrency || "EUR";
+  document.getElementById("billing-customs").value = s.customsDuty || "";
+  document.getElementById("billing-customs-currency").value = s.customsDutyCurrency || "EUR";
+  document.getElementById("billing-brokerage").value = s.brokerage || "";
+  document.getElementById("billing-brokerage-currency").value = s.brokerageCurrency || "EUR";
+  document.getElementById("billing-mrn").value = s.mrn || "";
+  document.getElementById("billing-entry").value = s.entryNo || "";
+  document.getElementById("billing-notes").value = s.notesBilling || "";
+
+  // Show existing attachment if any
+  const attachInfo = document.getElementById("billing-attachment-info");
+  if (s.attachmentUrl) {
+    attachInfo.innerHTML = `<div class="attachment-row">
+      <a href="${s.attachmentUrl}" target="_blank">📎 ${s.attachmentName || "Allegato"}</a>
+      <button class="btn-sm danger" onclick="removeAttachment()">Rimuovi</button>
+    </div>`;
+  } else {
+    attachInfo.innerHTML = "";
+  }
+
+  document.getElementById("billing-modal").classList.add("open");
+}
+
+function closeBillingModal() {
+  document.getElementById("billing-modal").classList.remove("open");
+  currentBillingTracking = null;
+  document.getElementById("billing-file").value = "";
+}
+
+async function saveBilling() {
+  if (!currentBillingTracking) return;
+  const billing = {
+    cost: parseFloat(document.getElementById("billing-cost").value) || null,
+    costCurrency: document.getElementById("billing-cost-currency").value || "EUR",
+    customsDuty: parseFloat(document.getElementById("billing-customs").value) || null,
+    customsDutyCurrency: document.getElementById("billing-customs-currency").value || "EUR",
+    brokerage: parseFloat(document.getElementById("billing-brokerage").value) || null,
+    brokerageCurrency: document.getElementById("billing-brokerage-currency").value || "EUR",
+    mrn: document.getElementById("billing-mrn").value.trim() || null,
+    entryNo: document.getElementById("billing-entry").value.trim() || null,
+    notesBilling: document.getElementById("billing-notes").value.trim() || null,
+  };
+
+  const btn = document.getElementById("billing-save-btn");
+  btn.disabled = true;
+  btn.textContent = "Salvataggio...";
+
+  try {
+    await updateBillingDB(currentBillingTracking, billing);
+
+    // Handle file upload if present
+    const fileInput = document.getElementById("billing-file");
+    if (fileInput.files && fileInput.files[0]) {
+      btn.textContent = "Caricamento allegato...";
+      const result = await uploadAttachment(currentBillingTracking, fileInput.files[0]);
+      const s = state.shipments.find(x => x.masterTracking === currentBillingTracking);
+      if (s) {
+        s.attachmentUrl = result.url;
+        s.attachmentName = result.name;
+      }
+    }
+
+    // Update local state
+    const s = state.shipments.find(x => x.masterTracking === currentBillingTracking);
+    if (s) Object.assign(s, billing);
+
+    closeBillingModal();
+    render();
+    showToast("✓ Costi salvati");
+  } catch (e) {
+    showToast("Errore: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Salva";
+  }
+}
+
+async function removeAttachment() {
+  if (!currentBillingTracking) return;
+  if (!confirm("Rimuovere l\'allegato?")) return;
+  const s = state.shipments.find(x => x.masterTracking === currentBillingTracking);
+  if (s && s.attachmentUrl) {
+    try {
+      await deleteAttachment(currentBillingTracking, s.attachmentUrl);
+      s.attachmentUrl = null;
+      s.attachmentName = null;
+      document.getElementById("billing-attachment-info").innerHTML = "";
+      render();
+      showToast("Allegato rimosso");
+    } catch (e) {
+      showToast("Errore: " + e.message);
+    }
+  }
+}
+
 // ── ADD MANUAL ───────────────────────────────────────────
 function openAddModal() {
   document.getElementById("add-modal").classList.add("open");
@@ -559,7 +726,7 @@ async function handleImportFile(input) {
       if (isPirateShip) {
         const trk = r["Tracking Number"] || "";
         return {
-          masterTracking: "PS-" + trk, // Use tracking as unique ID for PirateShip
+          masterTracking: "PS-" + trk,
           courierTracking: trk,
           sender: r["Ship From"] || "",
           recipient: r["Recipient"] || "",
@@ -570,7 +737,12 @@ async function handleImportFile(input) {
           state: r["Tracking Status"] || "",
           description: r["Batch"] || "",
           reference: "",
-          courier: "", // auto-detect from tracking
+          courier: "",
+          cost: parseFloat(r["Cost"]) || null,
+          costCurrency: "USD",
+          customsDutyCurrency: "USD",
+          brokerageCurrency: "USD",
+          currency: "USD",
           source: "PirateShip",
         };
       }
@@ -589,6 +761,11 @@ async function handleImportFile(input) {
         description: r["Descrizione Merce"] || r["Description"] || "",
         reference: r["Riferimento"] || r["Reference"] || "",
         courier: r["Corriere"] || r["courier"] || "",
+        cost: parseFloat(r["Prezzo Lordo Totale"]) || parseFloat(r["Prezzo Stimato"]) || parseFloat(r["Cost"]) || null,
+        costCurrency: "EUR",
+        customsDutyCurrency: "EUR",
+        brokerageCurrency: "EUR",
+        currency: "EUR",
         source: ext === "xlsx" ? "MBE" : "Import",
       };
     }).filter(r => r.masterTracking || r.courierTracking);
@@ -776,15 +953,305 @@ function escapeHtml(s) {
   return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+
+// ── STATISTICS ───────────────────────────────────────────
+const statsState = {
+  dateFrom: null,
+  dateTo: null,
+  filterSender: "",
+  filterRecipient: "",
+  filterCourier: "",
+  sortBy: "date",  // date | cost | duty
+};
+
+function openStats() {
+  // Default range: last 6 months
+  if (!statsState.dateFrom) {
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    statsState.dateFrom = sixMonthsAgo.toISOString().slice(0, 10);
+    statsState.dateTo = new Date().toISOString().slice(0, 10);
+  }
+  document.getElementById("stats-screen").style.display = "block";
+  document.getElementById("app-screen").style.display = "none";
+  renderStatsPage();
+}
+
+function closeStats() {
+  document.getElementById("stats-screen").style.display = "none";
+  document.getElementById("app-screen").style.display = "block";
+}
+
+function getFilteredForStats() {
+  let list = state.shipments;
+  // Date filter
+  const fromMs = statsState.dateFrom ? new Date(statsState.dateFrom).getTime() : 0;
+  const toMs = statsState.dateTo ? new Date(statsState.dateTo).getTime() + 86400000 : Infinity;
+  list = list.filter(s => {
+    const t = parseDateForSort(s.date);
+    return t >= fromMs && t <= toMs;
+  });
+  // Sender/recipient filter
+  if (statsState.filterSender) {
+    const q = statsState.filterSender.toLowerCase();
+    list = list.filter(s => (s.sender || "").toLowerCase().includes(q));
+  }
+  if (statsState.filterRecipient) {
+    const q = statsState.filterRecipient.toLowerCase();
+    list = list.filter(s => (s.recipient || "").toLowerCase().includes(q));
+  }
+  if (statsState.filterCourier) {
+    list = list.filter(s => courierLabel(s.courier, s.courierTracking) === statsState.filterCourier);
+  }
+  return list;
+}
+
+function renderStatsPage() {
+  const list = getFilteredForStats();
+
+  // Update inputs
+  document.getElementById("stats-date-from").value = statsState.dateFrom || "";
+  document.getElementById("stats-date-to").value = statsState.dateTo || "";
+
+  // Build courier options from all shipments (not filtered)
+  const couriers = new Set();
+  state.shipments.forEach(s => {
+    const c = courierLabel(s.courier, s.courierTracking);
+    if (c && c !== "—") couriers.add(c);
+  });
+  const courierSelect = document.getElementById("stats-courier");
+  if (courierSelect) {
+    const current = statsState.filterCourier;
+    courierSelect.innerHTML = `<option value="">Tutti i corrieri</option>` +
+      [...couriers].sort().map(c => `<option value="${c}" ${current === c ? "selected" : ""}>${c}</option>`).join("");
+  }
+
+  // Totals by currency
+  let totalEur = 0, totalUsd = 0;
+  let costEur = 0, costUsd = 0;
+  let customsEur = 0, customsUsd = 0;
+  list.forEach(s => {
+    const cost = parseFloat(s.cost) || 0;
+    const cd = parseFloat(s.customsDuty) || 0;
+    const br = parseFloat(s.brokerage) || 0;
+    if (s.costCurrency === "USD") costUsd += cost; else costEur += cost;
+    if (s.customsDutyCurrency === "USD") customsUsd += cd; else customsEur += cd;
+    if (s.brokerageCurrency === "USD") customsUsd += br; else customsEur += br;
+    const t = computeShipmentTotals(s);
+    totalEur += t.eur;
+    totalUsd += t.usd;
+  });
+
+  // Average delivery time (only delivered with both dates)
+  const deliveredWithDates = list.filter(s => s.status === "delivered" && s.deliveryDate && s.date);
+  let avgDays = 0;
+  if (deliveredWithDates.length > 0) {
+    const totalDays = deliveredWithDates.reduce((sum, s) => {
+      const start = parseDateForSort(s.date);
+      const end = parseDateForSort(s.deliveryDate);
+      if (start && end && end > start) return sum + Math.round((end - start) / 86400000);
+      return sum;
+    }, 0);
+    avgDays = Math.round(totalDays / deliveredWithDates.length);
+  }
+
+  // Monthly chart data
+  const monthly = {};
+  list.forEach(s => {
+    const t = parseDateForSort(s.date);
+    if (!t) return;
+    const d = new Date(t);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    if (!monthly[key]) monthly[key] = { count: 0, eur: 0, usd: 0 };
+    monthly[key].count++;
+    const tot = computeShipmentTotals(s);
+    monthly[key].eur += tot.eur;
+    monthly[key].usd += tot.usd;
+  });
+
+  const sortedMonths = Object.keys(monthly).sort();
+
+  // Render
+  const html = `
+    <div class="stats-section">
+      <h3>Riepilogo periodo</h3>
+      <div class="stats-cards">
+        <div class="stat-big">
+          <div class="stat-big-num">${list.length}</div>
+          <div class="stat-big-lbl">Spedizioni</div>
+        </div>
+        <div class="stat-big">
+          <div class="stat-big-num">${avgDays || "—"}${avgDays ? "<small> gg</small>" : ""}</div>
+          <div class="stat-big-lbl">Tempo medio consegna</div>
+        </div>
+        <div class="stat-big">
+          <div class="stat-big-num">${totalEur > 0 ? "€" + totalEur.toFixed(0) : "—"}</div>
+          <div class="stat-big-lbl">Totale EUR</div>
+        </div>
+        <div class="stat-big">
+          <div class="stat-big-num">${totalUsd > 0 ? "$" + totalUsd.toFixed(0) : "—"}</div>
+          <div class="stat-big-lbl">Totale USD</div>
+        </div>
+      </div>
+    </div>
+
+    ${(totalEur > 0 || totalUsd > 0) ? `
+    <div class="stats-section">
+      <h3>Dettaglio costi</h3>
+      <table class="stats-table">
+        <thead><tr><th></th><th>EUR</th><th>USD</th></tr></thead>
+        <tbody>
+          <tr><td>Spedizione</td><td>${costEur > 0 ? "€" + costEur.toFixed(2) : "—"}</td><td>${costUsd > 0 ? "$" + costUsd.toFixed(2) : "—"}</td></tr>
+          <tr><td>Dazi + Sdoganamento</td><td>${customsEur > 0 ? "€" + customsEur.toFixed(2) : "—"}</td><td>${customsUsd > 0 ? "$" + customsUsd.toFixed(2) : "—"}</td></tr>
+          <tr class="total-row"><td>Totale</td><td><strong>${totalEur > 0 ? "€" + totalEur.toFixed(2) : "—"}</strong></td><td><strong>${totalUsd > 0 ? "$" + totalUsd.toFixed(2) : "—"}</strong></td></tr>
+        </tbody>
+      </table>
+    </div>` : ""}
+
+    ${sortedMonths.length > 0 ? `
+    <div class="stats-section">
+      <h3>Spedizioni per mese</h3>
+      <div class="monthly-chart">
+        ${renderMonthlyChart(sortedMonths, monthly)}
+      </div>
+    </div>` : ""}
+
+    ${renderCourierBreakdown(list)}
+
+    ${renderTopShipments(list)}
+  `;
+
+  document.getElementById("stats-content").innerHTML = html;
+}
+
+function renderCourierBreakdown(list) {
+  const breakdown = {};
+  list.forEach(s => {
+    const c = courierLabel(s.courier, s.courierTracking);
+    if (!breakdown[c]) breakdown[c] = { count: 0, eur: 0, usd: 0 };
+    breakdown[c].count++;
+    const tot = computeShipmentTotals(s);
+    breakdown[c].eur += tot.eur;
+    breakdown[c].usd += tot.usd;
+  });
+  const sorted = Object.entries(breakdown).sort((a, b) => b[1].count - a[1].count);
+  if (sorted.length === 0) return "";
+  return `<div class="stats-section">
+    <h3>Per corriere</h3>
+    <table class="stats-table">
+      <thead><tr><th>Corriere</th><th>Spedizioni</th><th>Costi</th></tr></thead>
+      <tbody>
+        ${sorted.map(([c, d]) => {
+          const costs = [];
+          if (d.eur > 0) costs.push(`€${d.eur.toFixed(0)}`);
+          if (d.usd > 0) costs.push(`$${d.usd.toFixed(0)}`);
+          return `<tr><td>${c}</td><td>${d.count}</td><td>${costs.join(" + ") || "—"}</td></tr>`;
+        }).join("")}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+function renderTopShipments(list) {
+  if (statsState.sortBy === "date") return ""; // skip if not sorted by cost/duty
+  const field = statsState.sortBy === "cost" ? "cost" : "customsDuty";
+  const title = statsState.sortBy === "cost" ? "Top spedizioni per costo" : "Top spedizioni per dazi";
+  const sorted = [...list]
+    .filter(s => parseFloat(s[field]) > 0)
+    .sort((a, b) => (parseFloat(b[field]) || 0) - (parseFloat(a[field]) || 0))
+    .slice(0, 10);
+  if (sorted.length === 0) return "";
+  return `<div class="stats-section">
+    <h3>${title}</h3>
+    <table class="stats-table">
+      <thead><tr><th>Destinatario</th><th>Mittente</th><th>${statsState.sortBy === "cost" ? "Costo" : "Dazi"}</th></tr></thead>
+      <tbody>
+        ${sorted.map(s => {
+          const cur = field === "cost" ? s.costCurrency : s.customsDutyCurrency;
+          const sym = currencySymbol(cur);
+          const val = parseFloat(s[field]);
+          return `<tr>
+            <td><strong>${s.recipient || "—"}</strong></td>
+            <td>${s.sender || "—"}</td>
+            <td>${sym}${val.toFixed(2)}</td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+function renderMonthlyChart(months, data) {
+  const maxCount = Math.max(...months.map(m => data[m].count), 1);
+  return months.map(m => {
+    const d = data[m];
+    const heightPct = (d.count / maxCount) * 100;
+    const [year, month] = m.split("-");
+    const monthNames = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"];
+    const label = monthNames[parseInt(month) - 1] + " " + year.slice(2);
+    const costParts = [];
+    if (d.eur > 0) costParts.push(`€${d.eur.toFixed(0)}`);
+    if (d.usd > 0) costParts.push(`$${d.usd.toFixed(0)}`);
+    return `<div class="month-bar">
+      <div class="month-bar-value">${d.count}</div>
+      <div class="month-bar-fill" style="height:${heightPct}%"></div>
+      <div class="month-bar-label">${label}</div>
+      <div class="month-bar-cost">${costParts.join(" + ") || "—"}</div>
+    </div>`;
+  }).join("");
+}
+
+function updateStatsDateFrom(v) {
+  statsState.dateFrom = v;
+  renderStatsPage();
+}
+
+function updateStatsDateTo(v) {
+  statsState.dateTo = v;
+  renderStatsPage();
+}
+
+function updateStatsSender(v) {
+  statsState.filterSender = v;
+  renderStatsPage();
+}
+
+function updateStatsRecipient(v) {
+  statsState.filterRecipient = v;
+  renderStatsPage();
+}
+
+function updateStatsCourier(v) {
+  statsState.filterCourier = v;
+  renderStatsPage();
+}
+
+function setStatsSort(by) {
+  statsState.sortBy = by;
+  document.querySelectorAll(".sort-btn").forEach(b => {
+    b.classList.toggle("active", b.dataset.sort === by);
+  });
+  renderStatsPage();
+}
+
+function setStatsRange(months) {
+  const to = new Date();
+  const from = new Date();
+  from.setMonth(from.getMonth() - months);
+  statsState.dateFrom = from.toISOString().slice(0, 10);
+  statsState.dateTo = to.toISOString().slice(0, 10);
+  renderStatsPage();
+}
+
 // ── INIT ──────────────────────────────────────────────────
 async function initApp() {
   loadLocalCache();
   render();
   await loadShipments();
-  // Cleanup old delivered in background
-  cleanupOldDeliveredDB().then(removed => {
-    if (removed > 0) {
-      showToast(`🧹 ${removed} spedizioni consegnate da oltre 1 mese rimosse`);
+  // Auto-archive old delivered in background (no longer deletes)
+  autoArchiveOldDelivered().then(archived => {
+    if (archived > 0) {
+      showToast(`📦 ${archived} spedizioni consegnate da oltre 1 mese archiviate`);
       loadShipments();
     }
   }).catch(() => {});
