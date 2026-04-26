@@ -51,7 +51,10 @@ function dbToApp(row) {
     attachmentUrl: row.attachment_url,
     attachmentName: row.attachment_name,
     archived: row.archived,
-    currency: row.currency || "EUR",
+    currency: row.currency || "EUR",  // legacy field, kept for backward compat
+    costCurrency: row.cost_currency || "EUR",
+    customsDutyCurrency: row.customs_duty_currency || "EUR",
+    brokerageCurrency: row.brokerage_currency || "EUR",
     deliveryDate: row.delivery_date,
     eventsLoaded: false,
   };
@@ -87,6 +90,9 @@ function appToDb(s) {
     attachment_name: s.attachmentName ?? null,
     archived: s.archived ?? false,
     currency: s.currency || "EUR",
+    cost_currency: s.costCurrency || "EUR",
+    customs_duty_currency: s.customsDutyCurrency || "EUR",
+    brokerage_currency: s.brokerageCurrency || "EUR",
     delivery_date: s.deliveryDate ?? null,
   };
 }
@@ -149,7 +155,9 @@ async function updateBillingDB(masterTracking, billing) {
     cost: billing.cost ?? null,
     customs_duty: billing.customsDuty ?? null,
     brokerage: billing.brokerage ?? null,
-    currency: billing.currency || "EUR",
+    cost_currency: billing.costCurrency || "EUR",
+    customs_duty_currency: billing.customsDutyCurrency || "EUR",
+    brokerage_currency: billing.brokerageCurrency || "EUR",
     mrn: billing.mrn ?? null,
     entry_no: billing.entryNo ?? null,
     notes_billing: billing.notesBilling ?? null,
