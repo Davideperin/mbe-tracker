@@ -52,6 +52,7 @@ function dbToApp(row) {
     attachmentUrl: row.attachment_url,
     attachmentName: row.attachment_name,
     archived: row.archived,
+    statusLocked: row.status_locked || false,
     currency: row.currency || "EUR",  // legacy field, kept for backward compat
     costCurrency: row.cost_currency || "EUR",
     customsDutyCurrency: row.customs_duty_currency || "EUR",
@@ -90,6 +91,7 @@ function appToDb(s) {
     attachment_url: s.attachmentUrl ?? null,
     attachment_name: s.attachmentName ?? null,
     archived: s.archived ?? false,
+    status_locked: s.statusLocked ?? false,
     currency: s.currency || "EUR",
     cost_currency: s.costCurrency || "EUR",
     customs_duty_currency: s.customsDutyCurrency || "EUR",
@@ -140,7 +142,7 @@ async function bulkUpdateStatusDB(masterTrackings, newStatus) {
   const progress = { delivered: 100, transit: 60, exception: 40, pending: 15 }[newStatus] || 15;
   const { error } = await sb
     .from("shipments")
-    .update({ status: newStatus, progress })
+    .update({ status: newStatus, progress, status_locked: true })
     .in("master_tracking", masterTrackings);
   if (error) throw error;
 }

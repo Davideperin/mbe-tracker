@@ -92,9 +92,24 @@ function enrichShipment(s) {
 function normalizeStatus(state, courierTracking) {
   if (!state) return courierTracking ? "transit" : "pending";
   const s = state.toLowerCase();
+  // Delivered
   if (s.includes("consegn") || s.includes("delivered") || s === "d") return "delivered";
+  // PENDING: label created but not yet picked up (check this BEFORE transit)
+  if (s.includes("new label") ||
+      s.includes("not scanned yet") ||
+      s.includes("information sent to") ||
+      s.includes("creato un'etichetta") ||
+      s.includes("creato unetichetta") ||
+      s.includes("non ha ancora ricevuto") ||
+      s.includes("label created") ||
+      s.includes("etichetta creata") ||
+      s.includes("ready for") ||
+      s.includes("pronto per")) return "pending";
+  // Exception
   if (s.includes("eccez") || s.includes("exception") || s === "e" || s.includes("customs") || s.includes("dogana")) return "exception";
+  // Transit
   if (s.includes("transit") || s.includes("transito") || s.includes("corso") || s === "t" || s.includes("smist") || s.includes("spedito") || s.includes("shipped")) return "transit";
+  // Generic pending
   if (s.includes("attesa") || s.includes("pending") || s.includes("bozza") || s.includes("draft")) return "pending";
   return courierTracking ? "transit" : "pending";
 }
@@ -240,7 +255,7 @@ function renderCard(s) {
       <div class="card-left">
         <div class="card-recipient">${s.recipient || "Destinatario sconosciuto"}</div>
         <div class="card-ref">${s.city || ""}${s.country && s.country !== "IT" ? " · " + s.country : ""}${s.reference ? " · Rif: " + s.reference : ""}</div>
-        <div class="card-tracking">MBE: ${s.masterTracking || "—"}</div>
+        <div class="card-tracking">${formatSourceTracking(s)}</div>
       </div>
       <span class="badge badge-${s.status}">${statusLabel(s.status)}</span>
     </div>
@@ -428,7 +443,7 @@ async function bulkChangeStatus(newStatus) {
     await bulkUpdateStatusDB(ids, newStatus);
     const progress = { delivered: 100, transit: 60, exception: 40, pending: 15 }[newStatus];
     state.shipments = state.shipments.map(s => {
-      if (state.selected.has(s.masterTracking)) return { ...s, status: newStatus, progress };
+      if (state.selected.has(s.masterTracking)) return { ...s, status: newStatus, progress, statusLocked: true };
       return s;
     });
     state.selected.clear();
@@ -807,7 +822,8 @@ async function handleImportFile(input) {
       else {
         const oldStatus = found.status;
         const newStatus = normalizeStatus(r.state, r.courierTracking);
-        const statusChanged = oldStatus !== newStatus || found.state !== r.state;
+        // If status was manually set, we IGNORE incoming status changes
+        const statusChanged = !found.statusLocked && (oldStatus !== newStatus || found.state !== r.state);
         // Detect cost change: import has a cost AND it differs from existing
         const costChanged = r.cost && parseFloat(r.cost) > 0 && parseFloat(r.cost) !== parseFloat(found.cost || 0);
         if (statusChanged || costChanged) {
@@ -858,11 +874,15 @@ async function confirmImport() {
     // Update existing
     for (const { existing, incoming } of importPending.updates) {
       // Smart merge: keep manually-edited fields from existing, but apply imported values where present
+      // If statusLocked, keep existing status; otherwise update from import
+      const newStatus = existing.statusLocked ? existing.status : normalizeStatus(incoming.state, incoming.courierTracking);
+      const newState = existing.statusLocked ? existing.state : (incoming.state || existing.state);
       const merged = enrichShipment({
         ...existing,
         // Always update from import:
-        state: incoming.state || existing.state,
-        status: normalizeStatus(incoming.state, incoming.courierTracking),
+        state: newState,
+        status: newStatus,
+        statusLocked: existing.statusLocked,
         date: incoming.date || existing.date,
         // Update cost only if import has a value (don't wipe manually-entered cost)
         cost: incoming.cost !== null && incoming.cost !== undefined ? incoming.cost : existing.cost,
@@ -956,6 +976,21 @@ function showToast(msg) {
   t.textContent = msg;
   t.classList.add("show");
   setTimeout(() => t.classList.remove("show"), 2500);
+}
+
+function formatSourceTracking(s) {
+  const src = s.source || "";
+  // PirateShip: show "PirateShip" label with the original tracking number (without PS- prefix)
+  if (src === "PirateShip") {
+    const cleanTrk = (s.masterTracking || "").replace(/^PS-/, "");
+    return `PirateShip: ${cleanTrk || "—"}`;
+  }
+  // MBE: show MBE label
+  if (src === "MBE") return `MBE: ${s.masterTracking || "—"}`;
+  // Other brokers/imports: show source name if available
+  if (src) return `${src}: ${s.masterTracking || "—"}`;
+  // Manual or unknown: show tracking only
+  return s.masterTracking || "—";
 }
 
 function formatDate(d) {
@@ -1184,7 +1219,7 @@ function renderStatsPage() {
     <div class="stats-section">
       <h3>Spedizioni per mese</h3>
       <div class="monthly-chart">
-        ${renderMonthlyChart(sortedMonths, monthly)}
+        ${renderMonthlyChart([...sortedMonths].reverse(), monthly)}
       </div>
     </div>` : ""}
 
