@@ -54,6 +54,9 @@
     <button class="icon-btn" onclick="loadShipments()" title="Aggiorna" id="refresh-btn">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
     </button>
+    <button class="icon-btn" onclick="openStats()" title="Statistiche">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+    </button>
     <button class="icon-btn" onclick="openImportModal()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
       Importa
@@ -148,6 +151,64 @@
   </div>
 </div>
 
+<!-- ── STATS SCREEN ── -->
+<div id="stats-screen" style="display:none;">
+  <div class="topbar">
+    <div class="topbar-title">
+      <button class="icon-btn-back" onclick="closeStats()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+      </button>
+      📊 Statistiche
+    </div>
+  </div>
+
+  <div class="stats-controls">
+    <div class="stats-quick-ranges">
+      <button class="filter-chip" onclick="setStatsRange(1)">1 mese</button>
+      <button class="filter-chip" onclick="setStatsRange(3)">3 mesi</button>
+      <button class="filter-chip" onclick="setStatsRange(6)">6 mesi</button>
+      <button class="filter-chip" onclick="setStatsRange(12)">1 anno</button>
+    </div>
+    <div class="stats-date-range">
+      <div>
+        <label>Dal</label>
+        <input type="date" id="stats-date-from" onchange="updateStatsDateFrom(this.value)">
+      </div>
+      <div>
+        <label>Al</label>
+        <input type="date" id="stats-date-to" onchange="updateStatsDateTo(this.value)">
+      </div>
+    </div>
+    <div class="stats-text-filters">
+      <div>
+        <label>Mittente</label>
+        <input type="text" placeholder="es. Pret a Porter" oninput="updateStatsSender(this.value)">
+      </div>
+      <div>
+        <label>Destinatario</label>
+        <input type="text" placeholder="es. Matteo Perin" oninput="updateStatsRecipient(this.value)">
+      </div>
+      <div>
+        <label>Corriere</label>
+        <select id="stats-courier" onchange="updateStatsCourier(this.value)">
+          <option value="">Tutti i corrieri</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="stats-sort-row">
+      <span class="sort-label">Ordina per:</span>
+      <button class="sort-btn active" data-sort="date" onclick="setStatsSort('date')">Data</button>
+      <button class="sort-btn" data-sort="cost" onclick="setStatsSort('cost')">💰 Costo spedizione</button>
+      <button class="sort-btn" data-sort="duty" onclick="setStatsSort('duty')">🛃 Dazi</button>
+    </div>
+  </div>
+
+  <div class="stats-content-wrap">
+    <div id="stats-content"></div>
+  </div>
+</div>
+
 </div> <!-- end app-screen -->
 
 <!-- Billing modal -->
@@ -158,18 +219,25 @@
 
     <div class="billing-grid">
       <div>
-        <label>Costo spedizione (€)</label>
+        <label>Costo spedizione</label>
         <input type="number" step="0.01" id="billing-cost" placeholder="0.00">
       </div>
       <div>
-        <label>Dazi doganali (€)</label>
+        <label>Dazi doganali</label>
         <input type="number" step="0.01" id="billing-customs" placeholder="0.00">
       </div>
       <div>
-        <label>Spese sdoganamento (€)</label>
+        <label>Spese sdoganamento</label>
         <input type="number" step="0.01" id="billing-brokerage" placeholder="0.00">
       </div>
       <div>
+        <label>Valuta</label>
+        <select id="billing-currency">
+          <option value="EUR">EUR (€)</option>
+          <option value="USD">USD ($)</option>
+        </select>
+      </div>
+      <div style="grid-column: 1 / -1;">
         <label>MRN</label>
         <input type="text" id="billing-mrn" placeholder="26ITQXU1TCH...">
       </div>
