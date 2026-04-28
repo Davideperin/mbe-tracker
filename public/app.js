@@ -987,11 +987,12 @@ function setLoading(val) {
   }
 }
 
-function showToast(msg) {
+function showToast(msg, duration = 4500) {
   const t = document.getElementById("toast");
   t.textContent = msg;
   t.classList.add("show");
-  setTimeout(() => t.classList.remove("show"), 2500);
+  clearTimeout(t._hideTimer);
+  t._hideTimer = setTimeout(() => t.classList.remove("show"), duration);
 }
 
 function formatSourceTracking(s) {
