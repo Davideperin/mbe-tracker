@@ -289,6 +289,8 @@ function renderCard(s) {
 
     ${note ? `<div class="card-note">📝 ${escapeHtml(note)}</div>` : ""}
 
+    ${renderDeliveryInfo(s)}
+
     ${renderBillingSummary(s)}
 
     ${eventsHtml}
@@ -328,6 +330,20 @@ function renderBillingSummary(s) {
     });
   }
   return `<div class="card-billing">${parts.join("")}</div>`;
+}
+
+
+function renderDeliveryInfo(s) {
+  if (s.status !== "delivered") return "";
+  if (!s.deliveryDate && !s.deliverySign) return "";
+  const parts = [];
+  if (s.deliveryDate) {
+    parts.push(`📅 Consegnata il <strong>${formatDate(s.deliveryDate)}</strong>`);
+  }
+  if (s.deliverySign) {
+    parts.push(`✍️ Firmato da <strong>${escapeHtml(s.deliverySign)}</strong>`);
+  }
+  return `<div class="delivery-info">${parts.join("")}</div>`;
 }
 
 function computeShipmentTotals(s) {
@@ -1410,6 +1426,85 @@ function setStatsRange(months) {
     b.classList.toggle("active", parseInt(b.dataset.months) === months);
   });
   renderStatsPage();
+}
+
+
+// ── SYNC FROM MBE API ─────────────────────────────────────
+async function syncFromMBE() {
+  // Get all MBE shipments that are not delivered or archived
+  const candidates = state.shipments.filter(s =>
+    !s.archived &&
+    s.masterTracking &&
+    s.masterTracking.startsWith("IT") &&  // MBE master tracking format
+    s.status !== "delivered"
+  );
+
+  if (candidates.length === 0) {
+    showToast("Nessuna spedizione MBE da aggiornare");
+    return;
+  }
+
+  const btn = document.getElementById("mbe-sync-btn");
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add("spinning");
+  }
+
+  showToast(`Sincronizzazione di ${candidates.length} spedizioni MBE...`);
+
+  try {
+    const trackings = candidates.map(s => s.masterTracking);
+    const results = await syncMBEStatusBatch(trackings);
+
+    let updated = 0;
+    let delivered = 0;
+    for (const result of results) {
+      if (!result.tracking || !result.status) continue;
+      const local = state.shipments.find(s => s.masterTracking === result.tracking);
+      if (!local) continue;
+      // Skip if user has manually locked the status
+      if (local.statusLocked) continue;
+
+      const newStatus = mapMBEStatus(result.status);
+      const statusChanged = local.status !== newStatus;
+      const newDeliveryDate = result.deliveryDate;
+      const deliverySignChanged = result.deliverySign && local.deliverySign !== result.deliverySign;
+
+      if (statusChanged || newDeliveryDate || deliverySignChanged) {
+        await applyMBEUpdate(result.tracking, result);
+        updated++;
+        if (newStatus === "delivered" && local.status !== "delivered") delivered++;
+
+        // Update local state immediately for UI
+        local.state = result.status;
+        local.status = newStatus;
+        local.progress = { delivered: 100, transit: 60, exception: 40, pending: 15 }[newStatus] || 15;
+        if (newDeliveryDate) local.deliveryDate = newDeliveryDate;
+        if (result.deliverySign) local.deliverySign = result.deliverySign;
+        if (result.courierTracking && !local.courierTracking) local.courierTracking = result.courierTracking;
+      }
+    }
+
+    state.lastSync = new Date().toLocaleString("it-IT");
+    saveLocalCache();
+    render();
+
+    if (updated === 0) {
+      showToast("✓ Tutte le spedizioni sono già aggiornate");
+    } else if (delivered > 0) {
+      showToast(`✓ ${updated} aggiornate · ${delivered} consegnate! 📦`);
+    } else {
+      showToast(`✓ ${updated} spedizioni aggiornate da MBE`);
+    }
+  } catch (e) {
+    console.error("MBE sync error:", e);
+    showToast("Errore sync MBE: " + e.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove("spinning");
+    }
+  }
 }
 
 // ── INIT ──────────────────────────────────────────────────
