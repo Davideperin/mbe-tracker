@@ -9,8 +9,41 @@ async function signIn(email, password) {
 
 async function signOut() {
   await sb.auth.signOut();
+  // Reset all app state
   state.user = null;
   state.shipments = [];
+  state.filter = "transit";
+  state.search = "";
+  state.lastSync = null;
+  if (state.selected) state.selected.clear();
+  // Reset UI elements
+  const searchInput = document.getElementById("search-input");
+  if (searchInput) searchInput.value = "";
+  // Reset filter chips: activate default "In transito"
+  document.querySelectorAll(".filter-chip").forEach(c => {
+    c.classList.toggle("active", c.dataset.filter === "transit");
+  });
+  // Hide action bar (multi-select)
+  const actionBar = document.getElementById("action-bar");
+  if (actionBar) actionBar.classList.remove("show");
+  // Reset login button to initial state
+  const loginBtn = document.getElementById("login-btn");
+  if (loginBtn) {
+    loginBtn.disabled = false;
+    loginBtn.textContent = "Accedi";
+  }
+  // Clear login form
+  const emailInput = document.getElementById("login-email");
+  const passwordInput = document.getElementById("login-password");
+  const loginError = document.getElementById("login-error");
+  if (emailInput) emailInput.value = "";
+  if (passwordInput) passwordInput.value = "";
+  if (loginError) loginError.textContent = "";
+  // Clear local cache to prevent stale data on next login
+  try {
+    localStorage.removeItem("mbe_cache");
+    localStorage.removeItem("mbe_last_sync");
+  } catch {}
   showLoginScreen();
 }
 
