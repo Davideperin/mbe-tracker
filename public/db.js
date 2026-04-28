@@ -53,6 +53,8 @@ function dbToApp(row) {
     attachmentName: row.attachment_name,
     archived: row.archived,
     statusLocked: row.status_locked || false,
+    deliverySign: row.delivery_sign,
+    lastMbeSync: row.last_mbe_sync,
     currency: row.currency || "EUR",  // legacy field, kept for backward compat
     costCurrency: row.cost_currency || "EUR",
     customsDutyCurrency: row.customs_duty_currency || "EUR",
@@ -92,6 +94,8 @@ function appToDb(s) {
     attachment_name: s.attachmentName ?? null,
     archived: s.archived ?? false,
     status_locked: s.statusLocked ?? false,
+    delivery_sign: s.deliverySign ?? null,
+    last_mbe_sync: s.lastMbeSync ?? null,
     currency: s.currency || "EUR",
     cost_currency: s.costCurrency || "EUR",
     customs_duty_currency: s.customsDutyCurrency || "EUR",
@@ -234,4 +238,62 @@ function parseAttachments(url, name) {
 function extractPathFromUrl(url) {
   const m = url.match(/\/attachments\/([^?]+)/);
   return m ? m[1] : null;
+}
+
+
+// ── MBE API SYNC ─────────────────────────────────────────
+async function syncMBEStatusBatch(trackings) {
+  if (!trackings || trackings.length === 0) return [];
+  // MBE allows max 100 per request, split if needed
+  const chunks = [];
+  for (let i = 0; i < trackings.length; i += 100) {
+    chunks.push(trackings.slice(i, i + 100));
+  }
+
+  const allResults = [];
+  for (const chunk of chunks) {
+    const response = await fetch("/.netlify/functions/mbe-sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ trackings: chunk }),
+    });
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error || "MBE sync failed");
+    }
+    allResults.push(...(data.results || []));
+  }
+  return allResults;
+}
+
+// Update DB with MBE sync results (only fields from MBE — preserve manual edits)
+async function applyMBEUpdate(masterTracking, mbeResult) {
+  const updates = {
+    last_mbe_sync: new Date().toISOString(),
+  };
+  // Only update if MBE provided data
+  if (mbeResult.status) {
+    updates.state = mbeResult.status;
+    updates.status = mapMBEStatus(mbeResult.status);
+    updates.progress = { delivered: 100, transit: 60, exception: 40, pending: 15 }[updates.status] || 15;
+  }
+  if (mbeResult.deliveryDate) updates.delivery_date = mbeResult.deliveryDate;
+  if (mbeResult.deliverySign) updates.delivery_sign = mbeResult.deliverySign;
+  if (mbeResult.courierTracking) updates.courier_tracking = mbeResult.courierTracking;
+
+  const { error } = await sb
+    .from("shipments")
+    .update(updates)
+    .eq("master_tracking", masterTracking)
+    .eq("status_locked", false); // don't overwrite manually-locked status
+  if (error) throw error;
+}
+
+function mapMBEStatus(mbeStatus) {
+  const s = (mbeStatus || "").toUpperCase();
+  if (s === "DELIVERED" || s.includes("DELIVERED")) return "delivered";
+  if (s === "WAITING_DELIVERY" || s.includes("TRANSIT") || s.includes("PROGRESS")) return "transit";
+  if (s.includes("EXCEPTION") || s.includes("PROBLEM")) return "exception";
+  if (s === "READY" || s.includes("CREATED") || s.includes("DRAFT") || s.includes("LABEL")) return "pending";
+  return "transit"; // default for unknown MBE statuses
 }
