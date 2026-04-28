@@ -281,11 +281,12 @@ async function applyMBEUpdate(masterTracking, mbeResult) {
   if (mbeResult.deliverySign) updates.delivery_sign = mbeResult.deliverySign;
   if (mbeResult.courierTracking) updates.courier_tracking = mbeResult.courierTracking;
 
+  // Use .or() to match both false and null status_locked values
   const { error } = await sb
     .from("shipments")
     .update(updates)
     .eq("master_tracking", masterTracking)
-    .eq("status_locked", false); // don't overwrite manually-locked status
+    .or("status_locked.is.null,status_locked.eq.false"); // accept both NULL and false
   if (error) throw error;
 }
 
