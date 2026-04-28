@@ -981,3 +981,33 @@ a.tracking-link:hover { text-decoration: underline; }
 @media (max-width: 600px) {
   .stats-text-filters { grid-template-columns: 1fr; }
 }
+
+/* ── PRIMARY ICON BUTTON (Sync MBE) ── */
+.icon-btn.primary-btn {
+  background: var(--blue);
+  color: white;
+  border-color: var(--blue);
+  font-weight: 600;
+}
+.icon-btn.primary-btn:hover {
+  background: var(--blue-dark);
+}
+.icon-btn.primary-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ── DELIVERY INFO ── */
+.delivery-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 0 16px 10px;
+  padding: 8px 12px;
+  background: #ECFDF5;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: #065F46;
+  border-left: 3px solid var(--green);
+}
+.delivery-info strong { color: #047857; }
