@@ -1431,12 +1431,15 @@ function setStatsRange(months) {
 
 // ── SYNC FROM MBE API ─────────────────────────────────────
 async function syncFromMBE() {
-  // Get all MBE shipments that are not delivered or archived
+  // Get all MBE shipments that need syncing:
+  // - not archived
+  // - has MBE master tracking format (starts with IT)
+  // - either: not delivered yet, OR delivered but missing delivery info
   const candidates = state.shipments.filter(s =>
     !s.archived &&
     s.masterTracking &&
-    s.masterTracking.startsWith("IT") &&  // MBE master tracking format
-    s.status !== "delivered"
+    s.masterTracking.startsWith("IT") &&
+    (s.status !== "delivered" || !s.deliveryDate || !s.deliverySign)
   );
 
   if (candidates.length === 0) {
@@ -1467,10 +1470,10 @@ async function syncFromMBE() {
 
       const newStatus = mapMBEStatus(result.status);
       const statusChanged = local.status !== newStatus;
-      const newDeliveryDate = result.deliveryDate;
-      const deliverySignChanged = result.deliverySign && local.deliverySign !== result.deliverySign;
+      const newDeliveryDate = result.deliveryDate && local.deliveryDate !== result.deliveryDate;
+      const newDeliverySign = result.deliverySign && local.deliverySign !== result.deliverySign;
 
-      if (statusChanged || newDeliveryDate || deliverySignChanged) {
+      if (statusChanged || newDeliveryDate || newDeliverySign) {
         await applyMBEUpdate(result.tracking, result);
         updated++;
         if (newStatus === "delivered" && local.status !== "delivered") delivered++;
