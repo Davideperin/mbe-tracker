@@ -604,21 +604,26 @@ input, textarea, select {
 /* ── TOAST ── */
 .toast {
   position: fixed;
-  bottom: 90px; left: 50%;
-  transform: translateX(-50%);
+  bottom: 100px; left: 50%;
+  transform: translateX(-50%) translateY(20px);
   background: var(--text);
   color: white;
-  padding: 10px 20px;
-  border-radius: var(--radius-pill);
-  font-size: 13px;
+  padding: 14px 28px;
+  border-radius: 14px;
+  font-size: 14px;
   font-weight: 500;
   z-index: 500;
   opacity: 0;
-  transition: opacity 0.2s;
+  transition: opacity 0.25s, transform 0.25s;
   white-space: nowrap;
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 12px 40px rgba(17,24,39,0.35), 0 4px 12px rgba(17,24,39,0.2);
+  max-width: calc(100vw - 32px);
+  text-align: center;
 }
-.toast.show { opacity: 1; }
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
 
 /* ── TRACKING LINK ── */
 a.tracking-link { color: var(--blue); text-decoration: none; font-family: var(--mono); font-size: 11px; }
