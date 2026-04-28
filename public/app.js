@@ -1024,6 +1024,14 @@ function parseDateForSort(d) {
     return isNaN(t) ? 0 : t;
   }
 
+  // ISO format: YYYY-MM-DD (from MBE API)
+  const isoMatch = d.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (isoMatch) {
+    const [_, y, m, day] = isoMatch;
+    const t = new Date(parseInt(y), parseInt(m) - 1, parseInt(day)).getTime();
+    if (!isNaN(t)) return t;
+  }
+
   // PirateShip format: "Tuesday, 4/21/26 4:22 PM PDT"
   const psMatch = d.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
   if (psMatch && d.includes(",")) {
@@ -1036,7 +1044,7 @@ function parseDateForSort(d) {
 
   // Italian format: DD/MM/YYYY
   if (d.includes("/")) {
-    const parts = d.split(" ")[0].split("/"); // take only date part if there's time
+    const parts = d.split(" ")[0].split("/");
     if (parts.length === 3) {
       const [day, month, year] = parts;
       let y = parseInt(year);
@@ -1046,7 +1054,7 @@ function parseDateForSort(d) {
     }
   }
 
-  // ISO or any other format
+  // ISO or any other format — final fallback
   const t = new Date(d).getTime();
   return isNaN(t) ? 0 : t;
 }
